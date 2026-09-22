@@ -148,3 +148,7 @@ your code, or the agents' code, runs as root.
 - Denying `Bash` has a documented side effect: Claude Code restores its `Glob`
   and `Grep` tools, which it normally leaves out in favour of shelling out. File
   search keeps working.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
