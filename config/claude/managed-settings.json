@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Bash",
+      "PowerShell",
+      "Monitor",
+      "WebFetch",
+      "WebFetch(domain:*)",
+      "WebSearch"
+    ],
+    "allow": [
+      "Read(//home/agent/mnt/terminalfs/**)",
+      "Edit(//home/agent/mnt/terminalfs/**)",
+      "Read(//home/agent/mnt/dotnetdocfs/**)",
+      "Edit(//home/agent/mnt/dotnetdocfs/**)"
+    ],
+    "additionalDirectories": [
+      "/home/agent/mnt/terminalfs",
+      "/home/agent/mnt/dotnetdocfs"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "disableSkillShellExecution": true,
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  }
+}
