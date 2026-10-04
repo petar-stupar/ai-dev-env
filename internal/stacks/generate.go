@@ -121,6 +121,10 @@ func Generate(r *Resolution) (*BuildContext, error) {
 	w("# ---- aide common tail ----")
 	w(`RUN if [ -d /opt/node ]; then v=$(ls /opt/node | grep -E '^[0-9]+$' | sort -n | tail -1); [ -n "$v" ] && ln -sfn /opt/node/$v /opt/node/current; fi`)
 	if claude {
+		// COPY --chmod also applies the mode to a parent directory it creates,
+		// which would leave /etc/claude-code without the execute bit and the
+		// policy unreadable by the agent user.
+		w("RUN install -d -m 0755 /etc/claude-code")
 		w("COPY --chmod=0644 %s /etc/claude-code/managed-settings.json", ContextManagedSettings)
 	}
 	if opencode {

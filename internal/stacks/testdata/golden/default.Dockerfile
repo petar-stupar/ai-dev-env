@@ -268,6 +268,7 @@ USER root
 
 # ---- aide common tail ----
 RUN if [ -d /opt/node ]; then v=$(ls /opt/node | grep -E '^[0-9]+$' | sort -n | tail -1); [ -n "$v" ] && ln -sfn /opt/node/$v /opt/node/current; fi
+RUN install -d -m 0755 /etc/claude-code
 COPY --chmod=0644 aide/managed-settings.json /etc/claude-code/managed-settings.json
 COPY --chown=agent:agent aide/opencode.json /home/agent/.config/opencode/opencode.json
 COPY aide/stacks aide/cache-dirs /etc/aide/
