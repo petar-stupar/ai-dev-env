@@ -1,0 +1,82 @@
+{
+  "Id": "sha256:0f045615e4ccc1065e33e9a9835cf2497fe2377f498bdfafc03417abdfa1065f",
+  "RepoTags": [
+    "ai-dev-env:latest"
+  ],
+  "RepoDigests": [
+    "ai-dev-env@sha256:0f045615e4ccc1065e33e9a9835cf2497fe2377f498bdfafc03417abdfa1065f"
+  ],
+  "Comment": "buildkit.dockerfile.v0",
+  "Created": "2026-09-22T19:10:04.469845086Z",
+  "Config": {
+    "User": "root",
+    "ExposedPorts": {
+      "9000/udp": {},
+      "8080/tcp": {},
+      "15641/tcp": {}
+    },
+    "Env": [
+      "PATH=/opt/opencode-fs:/home/agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "APP_UID=1654",
+      "ASPNETCORE_HTTP_PORTS=8080",
+      "DOTNET_RUNNING_IN_CONTAINER=true",
+      "DOTNET_VERSION=10.0.12",
+      "ASPNET_VERSION=10.0.12",
+      "DOTNET_GENERATE_ASPNET_CERTIFICATE=false",
+      "DOTNET_NOLOGO=true",
+      "DOTNET_SDK_VERSION=10.0.401",
+      "DOTNET_USE_POLLING_FILE_WATCHER=true",
+      "NUGET_XMLDOC_MODE=skip",
+      "POWERSHELL_DISTRIBUTION_CHANNEL=PSDocker-DotnetSDK-Ubuntu-24.04-arm64",
+      "DEBIAN_FRONTEND=noninteractive",
+      "LANG=C.UTF-8",
+      "CLAUDE_CONFIG_DIR=/home/agent/.credentials/claude",
+      "WORKSPACE=/home/agent/workspace",
+      "CODE_SERVER_PORT=8080",
+      "TERMINALFS_PORT=15641",
+      "DOTNETDOCFS_PORT=15640"
+    ],
+    "Entrypoint": [
+      "/usr/local/bin/entrypoint.sh"
+    ],
+    "WorkingDir": "/home/agent/workspace",
+    "Labels": {
+      "org.opencontainers.image.version": "24.04",
+      "aide.stacks": "base,dotnet"
+    },
+    "Cmd": [
+      "--bind-addr",
+      "0.0.0.0:8080"
+    ],
+    "StopSignal": "SIGTERM"
+  },
+  "Architecture": "arm64",
+  "Os": "linux",
+  "Size": 1110284454,
+  "RootFS": {
+    "Type": "layers",
+    "Layers": [
+      "sha256:1e9178dc90058fa454a60803300219ee8c17e515be8718817ed824b96fa1207b",
+      "sha256:dc1af4b760ae2b66beb8cf15678a19b777b2c62baf68be0a9c20f705332be9c3",
+      "sha256:81599a818a0cdffabb493633a9c8b1e1ec18d5fb4f1ae869c533af0d93d27937",
+      "sha256:26310ffa551edf111b7188245d37274ad94e8c4759d05d43c429f93bbf478b1d",
+      "sha256:1ebb0efa8b691aea140708e96e3105d88a0572563a20e735ae66d7b7e1a0807f"
+    ]
+  },
+  "Metadata": {
+    "LastTagTime": "2026-09-22T19:10:17.476895759Z"
+  },
+  "Descriptor": {
+    "mediaType": "application/vnd.oci.image.index.v1+json",
+    "digest": "sha256:0f045615e4ccc1065e33e9a9835cf2497fe2377f498bdfafc03417abdfa1065f",
+    "size": 856
+  },
+  "Identity": {
+    "Build": [
+      {
+        "Ref": "hgs2rmpcdyu0z7vtbb9h1t4ug",
+        "CreatedAt": "2026-09-22T19:10:25.067137262Z"
+      }
+    ]
+  }
+}

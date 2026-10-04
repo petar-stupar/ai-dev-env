@@ -60,14 +60,6 @@ type Exec struct {
 	Verbose io.Writer // when non-nil, every command line is echoed here
 }
 
-func (e *Exec) Run(ctx context.Context, args []string, io IO) (Result, error) {
-	return Result{}, errors.New("not implemented")
-}
-
-func (e *Exec) Pipe(ctx context.Context, from, to []string, stderr io.Writer) error {
-	return errors.New("not implemented")
-}
-
 // ContainerInfo is what aide needs from `docker container inspect`.
 type ContainerInfo struct {
 	ID      string
@@ -148,67 +140,4 @@ type RunSpec struct {
 // Client is the typed API over a Runner. Every method is one docker command.
 type Client struct {
 	R Runner
-}
-
-func (c *Client) Build(ctx context.Context, s BuildSpec) (id string, err error) {
-	return "", errors.New("not implemented")
-}
-func (c *Client) RunContainer(ctx context.Context, s RunSpec) (id string, err error) {
-	return "", errors.New("not implemented")
-}
-func (c *Client) Start(ctx context.Context, name string) error { return errors.New("not implemented") }
-func (c *Client) Stop(ctx context.Context, name string, timeout int) error {
-	return errors.New("not implemented")
-}
-func (c *Client) Remove(ctx context.Context, name string, force bool) error {
-	return errors.New("not implemented")
-}
-func (c *Client) Commit(ctx context.Context, name, ref string, pause bool) (id string, err error) {
-	return "", errors.New("not implemented")
-}
-func (c *Client) Container(ctx context.Context, name string) (*ContainerInfo, error) {
-	return nil, errors.New("not implemented")
-}
-func (c *Client) Image(ctx context.Context, ref string) (*ImageInfo, error) {
-	return nil, errors.New("not implemented")
-}
-func (c *Client) Tag(ctx context.Context, src, dst string) error {
-	return errors.New("not implemented")
-}
-func (c *Client) RemoveImage(ctx context.Context, ref string) error {
-	return errors.New("not implemented")
-}
-func (c *Client) VolumeCreate(ctx context.Context, name string) error {
-	return errors.New("not implemented")
-}
-func (c *Client) VolumeRemove(ctx context.Context, name string) error {
-	return errors.New("not implemented")
-}
-func (c *Client) VolumeExists(ctx context.Context, name string) (bool, error) {
-	return false, errors.New("not implemented")
-}
-
-// VolumeClone copies src into dst using helperImage (`cp -a`), so nothing is pulled.
-func (c *Client) VolumeClone(ctx context.Context, src, dst, helperImage string) error {
-	return errors.New("not implemented")
-}
-
-// Flatten runs `docker export <ctr> | docker import --change ... - <ref>` with
-// one --change per config item, and returns the new image ID.
-func (c *Client) Flatten(ctx context.Context, container, ref string, cfg ImageConfig, stderr io.Writer) (id string, err error) {
-	return "", errors.New("not implemented")
-}
-func (c *Client) Exec(ctx context.Context, name string, args ...string) (Result, error) {
-	return Result{}, errors.New("not implemented")
-}
-
-// Processes runs `ps -eo user:32,pid,ppid,etimes,args --no-headers` in the container.
-func (c *Client) Processes(ctx context.Context, name string) ([]Proc, error) {
-	return nil, errors.New("not implemented")
-}
-func (c *Client) Info(ctx context.Context) (*Info, error) { return nil, errors.New("not implemented") }
-
-// PublishedPorts returns host ports published by any container.
-func (c *Client) PublishedPorts(ctx context.Context) ([]int, error) {
-	return nil, errors.New("not implemented")
 }
