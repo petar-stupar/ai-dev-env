@@ -1,0 +1,6 @@
+{
+  "description": "Node.js 22 and npm, side by side with other Node stacks",
+  "order": 30,
+  "requires": ["base"],
+  "cache": ["npm"]
+}

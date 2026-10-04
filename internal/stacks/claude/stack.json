@@ -1,0 +1,5 @@
+{
+  "description": "Claude Code CLI and its VS Code extension; sign-in kept on the credentials volume",
+  "order": 60,
+  "requires": ["base"]
+}

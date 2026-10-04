@@ -1,0 +1,1 @@
+{"description":"Go toolchain (current stable), module and build caches on the cache volume","order":22,"requires":["base"],"cache":["gomod","gobuild"]}
