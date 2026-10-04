@@ -4,7 +4,7 @@ package platform
 
 import (
 	"context"
-	"errors"
+	"runtime"
 
 	"github.com/petar-stupar/ai-dev-env/internal/docker"
 )
@@ -52,5 +52,5 @@ type Platform interface {
 
 // Detect inspects `docker info` and the environment.
 func Detect(ctx context.Context, d *docker.Client, env func(string) string, home string) (Platform, error) {
-	return nil, errors.New("not implemented")
+	return detect(ctx, d, d, env, home, runtime.GOOS)
 }
