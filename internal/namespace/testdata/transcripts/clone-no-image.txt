@@ -1,0 +1,45 @@
+# docker
+docker image inspect -f '{{json .}}' aide-web:base
+docker volume inspect aide-web-creds
+# error
+none
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "tfs"
+  ],
+  "mounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ],
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base",
+      "tfs"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "port": 8080,
+  "password": "<password>",
+  "appliedMounts": null
+}
+# state api
+{
+  "version": 1,
+  "stacks": [
+    "tfs"
+  ],
+  "mounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ],
+  "port": 8081,
+  "password": "<password>",
+  "appliedMounts": null
+}

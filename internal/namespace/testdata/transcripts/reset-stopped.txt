@@ -1,0 +1,31 @@
+# docker
+docker image inspect -f '{{json .}}' aide-web:base
+docker image inspect -f '{{json .}}' aide-web:snap
+docker container inspect -f '{{json .}}' aide-web
+docker rm aide-web
+docker image rm aide-web:snap
+# error
+none
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "base"
+  ],
+  "mounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ],
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "port": 8080,
+  "password": "<password>",
+  "appliedMounts": null
+}

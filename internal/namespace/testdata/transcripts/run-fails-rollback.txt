@@ -1,0 +1,44 @@
+# docker
+docker image inspect -f '{{json .}}' aide-web:base
+docker container inspect -f '{{json .}}' aide-web
+docker exec aide-web ps -eo user:32,pid,ppid,etimes,args --no-headers
+docker stop -t 30 aide-web
+docker commit aide-web aide-web:snap
+docker image inspect -f '{{.Id}}' aide-web:snap
+docker image inspect -f '{{json .}}' aide-web:snap
+docker rm aide-web
+docker run -d --name aide-web --hostname web --init --stop-timeout 30 --label aide.namespace=web --publish 127.0.0.1:8080:8080 --mount type=volume,src=aide-web-creds,dst=/home/agent/.credentials --mount type=volume,src=aide-web-cache,dst=/var/cache/aide --mount type=bind,src=$TMP/src/a,dst=/home/agent/workspace/a --mount type=bind,src=$TMP/src/b,dst=/home/agent/workspace/b --cap-add SYS_ADMIN --security-opt apparmor=unconfined --env CODE_SERVER_PASSWORD=<password> --env TERMINALFS_CLAUDE_STRICT=1 aide-web:snap
+docker rm -f aide-web
+docker run -d --name aide-web --hostname web --init --stop-timeout 30 --label aide.namespace=web --publish 127.0.0.1:8080:8080 --mount type=volume,src=aide-web-creds,dst=/home/agent/.credentials --mount type=volume,src=aide-web-cache,dst=/var/cache/aide --mount type=bind,src=$TMP/src/a,dst=/home/agent/workspace/a --cap-add SYS_ADMIN --security-opt apparmor=unconfined --env CODE_SERVER_PASSWORD=<password> --env TERMINALFS_CLAUDE_STRICT=1 aide-web:snap
+# error
+remount of namespace web: run with the new mounts: docker: Error response from daemon: invalid mount config for type "bind": bind source path does not exist; the previous mounts are restored
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "tfs"
+  ],
+  "mounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ],
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base",
+      "tfs"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "snapshot": "sha256:snap1",
+  "port": 8080,
+  "password": "<password>",
+  "appliedMounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ]
+}

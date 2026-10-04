@@ -1,0 +1,29 @@
+# docker
+docker image inspect -f '{{json .}}' aide-web:base
+docker image inspect -f '{{json .}}' aide-web:snap
+docker container inspect -f '{{json .}}' aide-web
+docker volume create aide-web-creds
+docker volume create aide-web-cache
+docker run -d --name aide-web --hostname web --init --stop-timeout 30 --label aide.namespace=web --publish 127.0.0.1:8080:8080 --mount type=volume,src=aide-web-creds,dst=/home/agent/.credentials --mount type=volume,src=aide-web-cache,dst=/var/cache/aide --cap-add SYS_ADMIN --env CODE_SERVER_PASSWORD=<password> --env TERMINALFS_CLAUDE_STRICT=1 aide-web:snap
+# error
+none
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "tfs"
+  ],
+  "mounts": null,
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base",
+      "tfs"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "snapshot": "sha256:snap1",
+  "port": 8080,
+  "password": "<password>",
+  "appliedMounts": []
+}

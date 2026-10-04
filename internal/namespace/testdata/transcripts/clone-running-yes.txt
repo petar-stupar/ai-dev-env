@@ -1,0 +1,67 @@
+# docker
+docker image inspect -f '{{json .}}' aide-web:base
+docker image inspect -f '{{json .}}' aide-web:snap
+docker container inspect -f '{{json .}}' aide-web
+docker commit aide-web aide-api:snap
+docker image inspect -f '{{.Id}}' aide-api:snap
+docker tag aide-web:base aide-api:base
+docker volume inspect aide-web-creds
+docker volume create aide-api-creds
+docker run --rm --entrypoint cp --mount type=volume,src=aide-web-creds,dst=/from,readonly --mount type=volume,src=aide-api-creds,dst=/to aide-web:base -a /from/. /to/
+# error
+none
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "tfs"
+  ],
+  "mounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ],
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base",
+      "tfs"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "snapshot": "sha256:snap0",
+  "port": 8080,
+  "password": "<password>",
+  "appliedMounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ]
+}
+# state api
+{
+  "version": 1,
+  "stacks": [
+    "tfs"
+  ],
+  "mounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ],
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base",
+      "tfs"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "snapshot": "sha256:snap9",
+  "port": 8081,
+  "password": "<password>",
+  "appliedMounts": null
+}

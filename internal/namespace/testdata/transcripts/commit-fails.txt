@@ -1,0 +1,38 @@
+# docker
+docker image inspect -f '{{json .}}' aide-web:base
+docker container inspect -f '{{json .}}' aide-web
+docker exec aide-web ps -eo user:32,pid,ppid,etimes,args --no-headers
+docker stop -t 30 aide-web
+docker commit aide-web aide-web:snap
+docker start aide-web
+# error
+remount of namespace web: commit the container: Error response from daemon: write /var/lib/docker/tmp: no space left on device; mounts unchanged
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "tfs"
+  ],
+  "mounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ],
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base",
+      "tfs"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "port": 8080,
+  "password": "<password>",
+  "appliedMounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ]
+}

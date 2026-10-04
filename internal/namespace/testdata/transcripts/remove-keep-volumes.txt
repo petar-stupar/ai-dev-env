@@ -1,0 +1,8 @@
+# docker
+docker rm -f aide-web
+docker image rm aide-web:snap
+docker image rm aide-web:base
+# error
+none
+# state web
+(none)

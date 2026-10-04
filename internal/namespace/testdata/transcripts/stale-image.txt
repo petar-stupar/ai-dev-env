@@ -1,0 +1,24 @@
+# docker
+docker image inspect -f '{{json .}}' aide-web:base
+docker container inspect -f '{{json .}}' aide-web
+# error
+cannot start namespace web: the image is stale (stacks changed); run "aide ns:web reset", then "aide ns:web build"
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "base",
+    "tfs"
+  ],
+  "mounts": null,
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "port": 8080,
+  "password": "<password>",
+  "appliedMounts": null
+}
