@@ -43,8 +43,37 @@ for hook in /etc/aide/entrypoint.d/*.sh; do
     bash "$hook" || warn "hook $(basename "$hook") failed (exit $?)"
 done
 
+# Shutdown order matters. The 9P servers (dotnetdocfs, terminalfs sessions)
+# serve mounts inside this container. If the kernel tears the mount namespace
+# down after runc has SIGKILLed a server, the unmount of that server's own 9P
+# mount can hang in the kernel and the container never finishes stopping. So
+# code-server runs as a child rather than PID 1's replacement, and on SIGTERM
+# this shell asks the servers to stop (they unmount themselves), lazily
+# unmounts whatever is left, and only then stops code-server.
+shutdown() {
+    trap - TERM INT
+    log "shutting down"
+    pkill -TERM -u "$AGENT_UID" -x dotnetdoc 2>/dev/null || true
+    pkill -TERM -u "$AGENT_UID" -x terminalfs 2>/dev/null || true
+
+    for _ in $(seq 1 50); do
+        pgrep -u "$AGENT_UID" -x dotnetdoc >/dev/null 2>&1 \
+            || pgrep -u "$AGENT_UID" -x terminalfs >/dev/null 2>&1 \
+            || break
+        sleep 0.1
+    done
+    while read -r _ target type _; do
+        [ "$type" = 9p ] || continue
+        umount -l "$target" 2>/dev/null && log "unmounted $target" || true
+    done </proc/mounts
+    [ -n "${CODE_SERVER_PID:-}" ] && kill -TERM "$CODE_SERVER_PID" 2>/dev/null || true
+    [ -n "${CODE_SERVER_PID:-}" ] && wait "$CODE_SERVER_PID" 2>/dev/null || true
+    exit 0
+}
+trap shutdown TERM INT
+
 log "starting code-server on 0.0.0.0:$CODE_SERVER_PORT"
-exec setpriv --reuid="$AGENT_UID" --regid="$AGENT_GID" --init-groups \
+setpriv --reuid="$AGENT_UID" --regid="$AGENT_GID" --init-groups \
     env HOME="$AGENT_HOME" USER="$AGENT_USER" LOGNAME="$AGENT_USER" \
         XDG_CACHE_HOME="${XDG_CACHE_HOME:-$AIDE_CACHE/xdg}" \
         PASSWORD="$CODE_SERVER_PASSWORD" \
@@ -53,4 +82,13 @@ exec setpriv --reuid="$AGENT_UID" --regid="$AGENT_GID" --init-groups \
         --auth password \
         --disable-telemetry \
         --disable-update-check \
-        "$WORKSPACE"
+        "$WORKSPACE" &
+CODE_SERVER_PID=$!
+
+# `wait` returns when a signal arrives too; loop until code-server itself exits.
+status=0
+while kill -0 "$CODE_SERVER_PID" 2>/dev/null; do
+    wait "$CODE_SERVER_PID" && status=0 || status=$?
+done
+log "code-server exited with $status"
+shutdown

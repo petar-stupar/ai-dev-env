@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read(//home/agent/mnt/terminalfs-sessions/terminalfs/**)",
+      "Edit(//home/agent/mnt/terminalfs-sessions/terminalfs/**)"
+    ],
+    "deny": [
+      "Bash(sudo:*)",
+      "Bash(su:*)",
+      "Bash(doas:*)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(rm -rf $HOME*)",
+      "Bash(shutdown:*)",
+      "Bash(reboot:*)",
+      "Bash(halt:*)",
+      "Bash(mkfs*)",
+      "Bash(dd:*)",
+      "Bash(diskutil:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(* | sh)",
+      "Bash(* | bash)",
+      "Bash(chmod -R 777 /*)"
+    ],
+    "additionalDirectories": ["/home/agent/mnt/terminalfs-sessions/terminalfs"]
+  },
+  "env": {
+    "TERMINALFS_RUNTIME_DIR": "/home/agent/mnt/terminalfs-sessions",
+    "TERMINALFS_CLAUDE_STRICT": "1"
+  }
+}

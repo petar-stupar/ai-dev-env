@@ -1,0 +1,9 @@
+{
+  "permission": {
+    "external_directory": {
+      "*": "ask",
+      "/home/agent/mnt/dotnetdocfs": "allow",
+      "/home/agent/mnt/dotnetdocfs/**": "allow"
+    }
+  }
+}

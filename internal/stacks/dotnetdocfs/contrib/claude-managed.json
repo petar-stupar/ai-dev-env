@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/agent/mnt/dotnetdocfs/**)",
+      "Edit(//home/agent/mnt/dotnetdocfs/**)"
+    ],
+    "additionalDirectories": ["/home/agent/mnt/dotnetdocfs"]
+  }
+}

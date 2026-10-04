@@ -1,5 +1,9 @@
 {
-  "description": "placeholder",
+  "description": "terminalfs: shell commands as files, one 9P tree per agent session; plugins for Claude Code and opencode",
   "order": 50,
-  "requires": ["base"]
+  "requires": ["base"],
+  "run": {
+    "capAdd": ["SYS_ADMIN"],
+    "securityOpt": ["apparmor=unconfined"]
+  }
 }

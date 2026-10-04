@@ -54,8 +54,11 @@ install_skill() {
         dests+=("$AGENT_HOME/.config/opencode/skills/$name")
     fi
     for dest in "${dests[@]}"; do
-        as_agent mkdir -p "$dest"
-        sed "s|<mount>|$mount|g" "$src" | as_agent tee "$dest/SKILL.md" >/dev/null
-        log "installed skill '$name' into $dest"
+        if as_agent mkdir -p "$dest" \
+            && sed "s|<mount>|$mount|g" "$src" | as_agent tee "$dest/SKILL.md" >/dev/null; then
+            log "installed skill '$name' into $dest"
+        else
+            warn "could not install skill '$name' into $dest"
+        fi
     done
 }

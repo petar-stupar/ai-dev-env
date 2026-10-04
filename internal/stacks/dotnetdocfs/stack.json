@@ -1,0 +1,10 @@
+{
+  "description": "dotnetdocfs: .NET and NuGet API docs as files at ~/mnt/dotnetdocfs, with its skill for both agents",
+  "order": 80,
+  "requires": ["base"],
+  "suggests": ["dotnet8", "dotnet10"],
+  "run": {
+    "capAdd": ["SYS_ADMIN"],
+    "securityOpt": ["apparmor=unconfined"]
+  }
+}
