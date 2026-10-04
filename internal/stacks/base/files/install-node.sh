@@ -34,6 +34,9 @@ curl -fsSL -o "$tmp/$tarball" "$base/$tarball"
 rm -rf "$dest"
 mkdir -p "$dest"
 tar -xJf "$tmp/$tarball" -C "$dest" --strip-components=1 --no-same-owner
+# The tarball's npm lags the npm release line; take the current one, as the
+# old nodesource-based image did.
+PATH="$dest/bin:$PATH" "$dest/bin/npm" install -g npm@latest >/dev/null
 # Owned by agent so `npm i -g` works without sudo.
 if id agent >/dev/null 2>&1; then
     chown -R agent:agent "$dest"
