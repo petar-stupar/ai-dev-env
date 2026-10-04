@@ -2,10 +2,7 @@
 // ordered set, and the generation of a Dockerfile and build context from it.
 package stacks
 
-import (
-	"errors"
-	"io/fs"
-)
+import "io/fs"
 
 // RunReq is what a stack needs from `docker run`.
 type RunReq struct {
@@ -53,9 +50,6 @@ func (r *Resolution) Names() []string {
 	return out
 }
 
-// Run returns the union of the stacks' run requirements, sorted and deduplicated.
-func (r *Resolution) Run() RunReq { return RunReq{} }
-
 // Has reports whether a stack is in the resolution.
 func (r *Resolution) Has(name string) bool {
 	for _, s := range r.Stacks {
@@ -82,27 +76,3 @@ const (
 	EtcDir         = "/etc/aide"
 	CodeServerPort = 8080
 )
-
-// Catalog loads every embedded stack.
-func Catalog() (map[string]*Stack, error) { return nil, errors.New("not implemented") }
-
-// Resolve expands requires, rejects unknown names, conflicts (in either
-// direction) and cycles, and orders the result topologically with ties broken
-// by Order then Name. Input order does not affect the output.
-func Resolve(cat map[string]*Stack, selected []string) (*Resolution, error) {
-	return nil, errors.New("not implemented")
-}
-
-// Generate renders the Dockerfile and assembles the build context.
-func Generate(r *Resolution) (*BuildContext, error) { return nil, errors.New("not implemented") }
-
-// WriteDir writes the build context into dir (which must exist and be empty).
-func (bc *BuildContext) WriteDir(dir string) error { return errors.New("not implemented") }
-
-// MergeJSON deep-merges JSON documents in order, keeping key order: objects
-// merge recursively, arrays concatenate with duplicates removed, and a scalar
-// that differs between documents is an error. Output is indented with two spaces.
-func MergeJSON(docs ...[]byte) ([]byte, error) { return nil, errors.New("not implemented") }
-
-// DefaultAide returns the embedded default.aide.
-func DefaultAide() []byte { return nil }
