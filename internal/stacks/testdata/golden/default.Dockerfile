@@ -180,7 +180,7 @@ USER root
 # ---- stack: terminalfs ----
 # Release to install: latest or an exact vX.Y.Z. The upstream install script
 # picks the self-contained linux x64/arm64 build.
-ARG TERMINALFS_VERSION=latest
+ARG TERMINALFS_VERSION=v0.5.0
 RUN curl -fsSL https://raw.githubusercontent.com/petar-stupar/terminalfs/main/scripts/install.sh \
         | sh -s -- --version "${TERMINALFS_VERSION}" --bin-dir /usr/local/bin \
     && terminalfs --version
