@@ -1,0 +1,26 @@
+# docker
+docker image inspect -f '{{json .}}' aide-web:base
+docker container inspect -f '{{json .}}' aide-web
+docker build -t aide-web:base --no-cache --build-arg AGENT_GID=20 --build-arg AGENT_UID=501 --label aide.namespace=web <build-context>
+docker image inspect -f '{{.Id}}' aide-web:base
+# error
+none
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "tfs"
+  ],
+  "mounts": null,
+  "image": {
+    "id": "sha256:base2",
+    "stacks": [
+      "base",
+      "tfs"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "port": 8080,
+  "password": "<password>",
+  "appliedMounts": null
+}

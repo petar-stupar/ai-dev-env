@@ -1,0 +1,48 @@
+# docker
+docker image inspect -f '{{json .}}' aide-web:base
+docker container inspect -f '{{json .}}' aide-web
+docker commit aide-web aide-web:snap
+docker image inspect -f '{{.Id}}' aide-web:snap
+docker image inspect -f '{{json .}}' aide-web:snap
+docker rm aide-web
+docker run -d --name aide-web --hostname web --init --stop-timeout 30 --label aide.namespace=web --publish 127.0.0.1:8080:8080 --mount type=volume,src=aide-web-creds,dst=/home/agent/.credentials --mount type=volume,src=aide-web-cache,dst=/var/cache/aide --mount type=bind,src=$TMP/src/a,dst=/home/agent/workspace/a --mount type=bind,src=$TMP/src/b,dst=/home/agent/workspace/b --env AIDE_NETWORK=open --env AIDE_SUDO_PASSWORD=<sudo-password> --env CODE_SERVER_PASSWORD=<password> --env HTTPS_PROXY= --env HTTP_PROXY= --env NO_PROXY= --env http_proxy= --env https_proxy= --env no_proxy= aide-web:snap
+# error
+none
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "base"
+  ],
+  "mounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    },
+    {
+      "host": "$TMP/src/b",
+      "container": "/home/agent/workspace/b"
+    }
+  ],
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "snapshot": "sha256:snap1",
+  "port": 8080,
+  "password": "<password>",
+  "sudoPassword": "<sudo-password>",
+  "appliedMounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    },
+    {
+      "host": "$TMP/src/b",
+      "container": "/home/agent/workspace/b"
+    }
+  ]
+}

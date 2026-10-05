@@ -1,0 +1,7 @@
+{
+  "description": ".NET 10 SDK",
+  "order": 11,
+  "requires": ["base"],
+  "cache": ["nuget"],
+  "allow": ["nuget.org", "*.nuget.org"]
+}

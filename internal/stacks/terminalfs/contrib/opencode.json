@@ -1,0 +1,38 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "external_directory": {
+      "*": "ask",
+      "/home/agent/mnt/terminalfs-sessions/terminalfs": "allow",
+      "/home/agent/mnt/terminalfs-sessions/terminalfs/**": "allow"
+    },
+    "bash": {
+      "*": "allow",
+      "sudo": "deny",
+      "sudo *": "deny",
+      "su": "deny",
+      "su *": "deny",
+      "doas": "deny",
+      "doas *": "deny",
+      "rm -rf /*": "deny",
+      "rm -rf ~*": "deny",
+      "rm -rf $HOME*": "deny",
+      "shutdown": "deny",
+      "shutdown *": "deny",
+      "reboot": "deny",
+      "reboot *": "deny",
+      "halt": "deny",
+      "halt *": "deny",
+      "mkfs*": "deny",
+      "dd": "deny",
+      "dd *": "deny",
+      "diskutil": "deny",
+      "diskutil *": "deny",
+      "git push --force*": "deny",
+      "git push -f*": "deny",
+      "* | sh": "deny",
+      "* | bash": "deny",
+      "chmod -R 777 /*": "deny"
+    }
+  }
+}

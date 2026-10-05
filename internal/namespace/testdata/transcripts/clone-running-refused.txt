@@ -1,0 +1,41 @@
+# docker
+docker container inspect -f '{{json .}}' aide-api
+docker image inspect -f '{{json .}}' aide-api:base
+docker image inspect -f '{{json .}}' aide-api:snap
+docker volume inspect aide-api-creds
+docker volume inspect aide-api-cache
+docker image inspect -f '{{json .}}' aide-web:base
+docker container inspect -f '{{json .}}' aide-web
+# error
+cannot clone namespace web while it is running: stop it first, or pass --yes to commit it paused
+# state web
+{
+  "version": 1,
+  "stacks": [
+    "tfs"
+  ],
+  "mounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ],
+  "image": {
+    "id": "sha256:base1",
+    "stacks": [
+      "base",
+      "tfs"
+    ],
+    "fingerprint": "<fingerprint>"
+  },
+  "port": 8080,
+  "password": "<password>",
+  "appliedMounts": [
+    {
+      "host": "$TMP/src/a",
+      "container": "/home/agent/workspace/a"
+    }
+  ]
+}
+# state api
+(none)

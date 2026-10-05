@@ -1,0 +1,4 @@
+# Stacks of the default namespace. `aide` seeds this file into the config
+# directory; edit the copy there, not this one. The namespace name on the line
+# is ignored when the file is applied.
+aide ns:default stack base dotnet10 node24 python3 clang golang gh qode claude terminalfs opencode-filesystem dotnetdocfs

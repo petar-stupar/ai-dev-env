@@ -1,0 +1,7 @@
+{
+  "description": "Node.js 24 and npm, side by side with other Node stacks",
+  "order": 31,
+  "requires": ["base"],
+  "cache": ["npm"],
+  "allow": ["registry.npmjs.org", "nodejs.org"]
+}

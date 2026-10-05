@@ -1,0 +1,7 @@
+{
+  "description": ".NET 8 SDK",
+  "order": 10,
+  "requires": ["base"],
+  "cache": ["nuget"],
+  "allow": ["nuget.org", "*.nuget.org"]
+}

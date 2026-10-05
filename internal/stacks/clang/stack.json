@@ -1,0 +1,1 @@
+{"description":"clang, lld, lldb and clangd (LLVM 18)","order":21,"requires":["base"]}

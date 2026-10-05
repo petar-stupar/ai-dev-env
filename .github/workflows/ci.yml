@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "gofmt needed on:"
+            echo "$out"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./... -race
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+      - name: shellcheck
+        run: |
+          shopt -s nullglob
+          files=(internal/stacks/*/entrypoint.d/*.sh internal/stacks/*/files/*.sh)
+          if [ "${#files[@]}" -gt 0 ]; then
+            shellcheck "${files[@]}"
+          fi
+
+  base-image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build aide
+        run: go build -trimpath -o aide ./cmd/aide
+      - name: Build base stack image
+        env:
+          XDG_CONFIG_HOME: ${{ runner.temp }}/aide
+        run: |
+          ./aide stacks
+          echo 'aide ns:ci stack base' > ci.aide
+          ./aide ns new ci-base ci.aide
+          ./aide ns:ci-base build

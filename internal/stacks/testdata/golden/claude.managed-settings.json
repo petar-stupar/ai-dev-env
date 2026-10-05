@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [],
+    "deny": [
+      "PowerShell",
+      "Monitor",
+      "WebFetch",
+      "WebFetch(domain:*)",
+      "WebSearch",
+      "Bash(sudo:*)",
+      "Bash(su:*)",
+      "Bash(doas:*)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(rm -rf $HOME*)",
+      "Bash(shutdown:*)",
+      "Bash(reboot:*)",
+      "Bash(halt:*)",
+      "Bash(mkfs*)",
+      "Bash(dd:*)",
+      "Bash(diskutil:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(* | sh)",
+      "Bash(* | bash)",
+      "Bash(chmod -R 777 /*)"
+    ],
+    "additionalDirectories": [],
+    "defaultMode": "acceptEdits"
+  },
+  "disableSkillShellExecution": true,
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  }
+}

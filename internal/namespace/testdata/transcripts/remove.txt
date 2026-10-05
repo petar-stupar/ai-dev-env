@@ -1,0 +1,12 @@
+# docker
+docker container inspect -f '{{json .}}' aide-web
+docker stop -t 30 aide-web
+docker rm -f aide-web
+docker image rm aide-web:snap
+docker image rm aide-web:base
+docker volume rm aide-web-creds
+docker volume rm aide-web-cache
+# error
+none
+# state web
+(none)
