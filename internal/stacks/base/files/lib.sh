@@ -38,6 +38,7 @@ as_agent() {
 
 # agent_has CMD: whether agent finds CMD on its PATH.
 agent_has() {
+    # shellcheck disable=SC2016 # $1 is the inner shell's argument
     as_agent sh -c 'command -v "$1" >/dev/null 2>&1' sh "$1"
 }
 

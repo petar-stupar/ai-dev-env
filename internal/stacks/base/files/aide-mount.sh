@@ -56,12 +56,16 @@ for o in "${list[@]}"; do
         *) die "mount option '$o' is not allowed" ;;
     esac
 done
-[ "$tcp" = 1 ] && [ "$port" = 1 ] || die "trans=tcp and port=<n> are required"
+if [ "$tcp" != 1 ] || [ "$port" != 1 ]; then
+    die "trans=tcp and port=<n> are required"
+fi
 
 # The mountpoint is checked through an open descriptor and mounted through
 # that same descriptor, so swapping a path component for a symlink between
 # the check and the mount gains nothing.
-[ -d "$target" ] && [ ! -L "$target" ] || die "$target is not a directory"
+if [ ! -d "$target" ] || [ -L "$target" ]; then
+    die "$target is not a directory"
+fi
 exec 9<"$target"
 real="$(readlink /proc/$$/fd/9)"
 case "$real" in

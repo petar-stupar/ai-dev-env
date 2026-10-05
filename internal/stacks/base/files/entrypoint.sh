@@ -95,10 +95,14 @@ shutdown() {
     while read -r _ target type _; do
         [ "$type" = 9p ] || continue
         target="$(printf '%b' "$target")" # /proc/mounts writes a space as \040
-        umount -l "$target" 2>/dev/null && log "unmounted $target" || true
+        if umount -l "$target" 2>/dev/null; then
+            log "unmounted $target"
+        fi
     done </proc/mounts
-    [ -n "${CODE_SERVER_PID:-}" ] && kill -TERM "$CODE_SERVER_PID" 2>/dev/null || true
-    [ -n "${CODE_SERVER_PID:-}" ] && wait "$CODE_SERVER_PID" 2>/dev/null || true
+    if [ -n "${CODE_SERVER_PID:-}" ]; then
+        kill -TERM "$CODE_SERVER_PID" 2>/dev/null || true
+        wait "$CODE_SERVER_PID" 2>/dev/null || true
+    fi
     exit "${1:-0}"
 }
 # Set before the hooks: they are what mounts 9P, so a stop that arrives while
