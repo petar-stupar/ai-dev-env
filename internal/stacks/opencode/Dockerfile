@@ -9,7 +9,7 @@ RUN if [ -n "${OPENCODE_VERSION}" ]; then \
     else \
         curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path; \
     fi
-ENV PATH=/home/agent/.opencode/bin:$PATH
+ENV PATH=$PATH:/home/agent/.opencode/bin
 
 # opencode keeps its credentials (SQLite) in $XDG_DATA_HOME/opencode. Link just
 # that directory to the credentials volume; moving XDG_DATA_HOME wholesale would

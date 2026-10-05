@@ -100,7 +100,9 @@ func mustDocker(t *testing.T, args ...string) string {
 }
 
 type state struct {
-	Port          int `json:"port"`
+	Port          int    `json:"port"`
+	SudoPassword  string `json:"sudoPassword"`
+	Network       string `json:"network"`
 	Snapshot      string
 	AppliedMounts []struct {
 		Host      string `json:"host"`
@@ -176,6 +178,105 @@ func timing(out, what string) string {
 	return what + ": (not printed)"
 }
 
+// checkSudo: root is behind the namespace's sudo password, which no process
+// inside the container was left holding.
+func checkSudo(t *testing.T, ns, password string) {
+	t.Helper()
+	if len(password) != 16 {
+		t.Fatalf("state has no sudo password: %q", password)
+	}
+	if out, err := execIn(ns, "sudo", "-n", "true"); err == nil {
+		t.Fatalf("sudo worked without a password: %s", out)
+	}
+	if out, err := execIn(ns, "sudo", "-n", "/usr/bin/mount", "-t", "tmpfs", "none", "/mnt"); err == nil {
+		t.Fatalf("the real mount ran through sudo without a password: %s", out)
+	}
+	if out, _ := execIn(ns, "sudo", "-n", "mount", "-t", "tmpfs", "none", "/home/agent/mnt"); !strings.Contains(out, "only 9p mounts are allowed") {
+		t.Fatalf("sudo mount did not reach the wrapper: %s", out)
+	}
+	if out, err := execIn(ns, "sh", "-c", "echo "+password+" | sudo -S -p '' id -u"); err != nil || out != "0" {
+		t.Fatalf("sudo with the namespace's password: %q %v", out, err)
+	}
+	if out, err := execIn(ns, "sudo", "-n", "true"); err == nil {
+		t.Fatalf("sudo cached the password: %s", out)
+	}
+	// docker exec hands a process the container's configured environment, so
+	// look at what the entrypoint actually passed on to code-server.
+	out, err := execIn(ns, "sh", "-c", "tr '\\0' '\\n' </proc/$(pgrep -u agent -o -f code-server)/environ")
+	if err != nil || !strings.Contains(out, "HOME=/home/agent") {
+		t.Fatalf("read code-server's environment: %v\n%s", err, out)
+	}
+	if strings.Contains(out, password) || strings.Contains(out, "AIDE_SUDO_PASSWORD") || strings.Contains(out, "CODE_SERVER_PASSWORD") {
+		t.Fatalf("code-server's environment still carries a secret:\n%s", out)
+	}
+}
+
+// checkNetwork: a new namespace reaches its allowed hosts through the proxy
+// and nothing else; allow, disallow and the open/allowlist switch work.
+func checkNetwork(t *testing.T, h *harness, ns string, port int) {
+	t.Helper()
+	min := time.Minute
+	if got := h.state(ns).Network; got != "allowlist" {
+		t.Fatalf("a new namespace's network = %q, want allowlist", got)
+	}
+	code := func(args ...string) string {
+		out, _ := execIn(ns, append([]string{"curl", "-sS", "-m", "20", "-o", "/dev/null", "-w", "%{http_code}"}, args...)...)
+		lines := strings.Split(out, "\n")
+		return lines[len(lines)-1]
+	}
+	if got := code("--noproxy", "*", "http://archive.ubuntu.com/ubuntu/"); got != "000" {
+		t.Fatalf("direct traffic got out: %s", got)
+	}
+	if got := code("--noproxy", "*", "https://1.1.1.1/"); got != "000" {
+		t.Fatalf("direct traffic to an address got out: %s", got)
+	}
+	if got := code("http://archive.ubuntu.com/ubuntu/"); got != "200" {
+		t.Fatalf("a host the base stack allows, through the proxy: %s", got)
+	}
+	if got := code("https://example.com/"); got != "000" {
+		t.Fatalf("a host that is not on the list was reachable: %s", got)
+	}
+	h.must(min, nil, "ns:"+ns, "allow", "example.com", "github.com")
+	if got := code("https://example.com/"); got != "200" {
+		t.Fatalf("example.com after allow: %s", got)
+	}
+	// git over ssh: no key is mounted, so reaching GitHub's sshd and being
+	// turned away by it is the success case.
+	out, _ := execIn(ns, "ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20", "git@github.com")
+	if !strings.Contains(out, "Permission denied (publickey)") && !strings.Contains(out, "successfully authenticated") {
+		t.Fatalf("ssh to an allowed host did not get through the proxy: %s", out)
+	}
+	out, _ = execIn(ns, "ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20", "git@gitlab.com")
+	if strings.Contains(out, "Permission denied (publickey)") || strings.Contains(out, "Welcome") {
+		t.Fatalf("ssh reached a host that is not on the list: %s", out)
+	}
+	h.must(min, nil, "ns:"+ns, "disallow", "example.com")
+	if got := code("https://example.com/"); got != "000" {
+		t.Fatalf("example.com after disallow: %s", got)
+	}
+	if out := h.must(min, nil, "ns:"+ns, "state"); !strings.Contains(out, "network allowlist") || !strings.Contains(out, "allow github.com") {
+		t.Fatalf("state lacks the network lines\n%s", out)
+	}
+
+	// open, then back: each recreates the container.
+	h.must(5*min, nil, "ns:"+ns, "network", "open", "--yes")
+	waitHTTP(t, port, min)
+	if got := code("--noproxy", "*", "https://example.com/"); got != "200" {
+		t.Fatalf("direct traffic with the network open: %s", got)
+	}
+	if out, err := execIn(ns, "test", "-e", "/etc/ssh/ssh_config.d/90-aide-proxy.conf"); err == nil {
+		t.Fatalf("the ssh proxy setting outlived the allowlist: %s", out)
+	}
+	h.must(5*min, nil, "ns:"+ns, "network", "allowlist", "--yes")
+	waitHTTP(t, port, min)
+	if got := code("--noproxy", "*", "https://example.com/"); got != "000" {
+		t.Fatalf("direct traffic after returning to the allowlist: %s", got)
+	}
+	if got := code("https://github.com/"); got != "200" {
+		t.Fatalf("an allowed host after the recreate (the list must be sent again): %s", got)
+	}
+}
+
 func TestLifecycle(t *testing.T) {
 	if os.Getenv("AIDE_INTEGRATION") != "1" {
 		t.Skip("set AIDE_INTEGRATION=1 to run against a real Docker daemon")
@@ -238,6 +339,9 @@ func TestLifecycle(t *testing.T) {
 	}
 	up := waitHTTP(t, port, min)
 	t.Logf("TIMING first start (run + code-server up): %s (http after %s)", time.Since(t0).Round(100*time.Millisecond), up.Round(100*time.Millisecond))
+
+	checkSudo(t, ns, h.state(ns).SudoPassword)
+	checkNetwork(t, h, ns, port)
 
 	// mount a while running (no mounts yet, so this is a remount)
 	out = h.must(5*min, nil, "ns:"+ns, "mount", dirA, wsA, "--yes")

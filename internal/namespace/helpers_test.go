@@ -197,12 +197,12 @@ func imageJSON(id string, layers int) string {
 	return string(b)
 }
 
-func containerJSON(running bool) string {
+func containerJSON(name string, running bool) string {
 	status := "exited"
 	if running {
 		status = "running"
 	}
-	return fmt.Sprintf(`{"Id":"c0ffee0123456789","Created":"2026-10-01T10:00:00Z","Image":"sha256:base1","State":{"Status":%q,"Running":%t,"Paused":false,"ExitCode":0},"Name":"/aide-web"}`, status, running)
+	return fmt.Sprintf(`{"Id":"c0ffee0123456789","Created":"2026-10-01T10:00:00Z","Image":"sha256:base1","State":{"Status":%q,"Running":%t,"Paused":false,"ExitCode":0},"Name":"/%s","Config":{"Labels":{"aide.namespace":%q}}}`, status, running, name, strings.TrimPrefix(name, "aide-"))
 }
 
 // image scripts both inspect forms of ref; repeated calls queue answers.
@@ -220,7 +220,7 @@ func (h *harness) noImage(ref string) {
 }
 
 func (h *harness) container(name string, running bool) {
-	h.rec.On([]string{"container", "inspect", "-f", "{{json .}}", name}, containerJSON(running), 0)
+	h.rec.On([]string{"container", "inspect", "-f", "{{json .}}", name}, containerJSON(name, running), 0)
 }
 
 func (h *harness) noContainer(name string) {
@@ -238,12 +238,31 @@ func (h *harness) phase(ns string, p Phase, snap string) {
 		h.rec.On([]string{"image", "inspect", "-f", "{{json .}}", ImageSnap(ns)}, imageJSON(snap, 31), 0)
 	}
 	switch p {
-	case Built:
+	case NoImage, Built:
 		h.noContainer(ContainerName(ns))
 	case Stopped:
 		h.container(ContainerName(ns), false)
 	case Running:
 		h.container(ContainerName(ns), true)
+	}
+}
+
+// dangling scripts an image known only by its ID, as an old snapshot is once
+// its tag has moved on.
+func (h *harness) dangling(ids ...string) {
+	for _, id := range ids {
+		h.rec.On([]string{"image", "inspect", "-f", "{{json .}}", id}, imageJSON(id, 31), 0)
+	}
+}
+
+// free scripts Docker holding nothing under the names of ns, which is what
+// New and Clone require of a new namespace.
+func (h *harness) free(ns string) {
+	h.noContainer(ContainerName(ns))
+	h.noImage(ImageBase(ns))
+	h.noImage(ImageSnap(ns))
+	for _, v := range []string{CredsVolume(ns), CacheVolume(ns)} {
+		h.rec.OnError([]string{"volume", "inspect", v}, "Error response from daemon: get "+v+": no such volume", 1)
 	}
 }
 
@@ -306,6 +325,9 @@ func (h *harness) golden(name string, err error, namespaces ...string) {
 		var st config.State
 		if jerr := json.Unmarshal(data, &st); jerr == nil && st.Password != "" {
 			data = bytes.ReplaceAll(data, []byte(st.Password), []byte("<password>"))
+			if st.SudoPassword != "" {
+				data = bytes.ReplaceAll(data, []byte(st.SudoPassword), []byte("<sudo-password>"))
+			}
 		}
 		b.Write(data)
 	}
@@ -315,6 +337,7 @@ func (h *harness) golden(name string, err error, namespaces ...string) {
 	got = strings.ReplaceAll(got, h.rawTmp, "$TMP")
 	got = regexp.MustCompile(`"fingerprint": "sha256:[0-9a-f]{64}"`).ReplaceAllString(got, `"fingerprint": "<fingerprint>"`)
 	got = regexp.MustCompile(`CODE_SERVER_PASSWORD=[a-z0-9]{16}`).ReplaceAllString(got, "CODE_SERVER_PASSWORD=<password>")
+	got = regexp.MustCompile(`AIDE_SUDO_PASSWORD=[a-z0-9]{16}`).ReplaceAllString(got, "AIDE_SUDO_PASSWORD=<sudo-password>")
 
 	path := filepath.Join("testdata", "transcripts", name+".txt")
 	if *update {

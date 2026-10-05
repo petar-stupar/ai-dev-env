@@ -19,6 +19,10 @@ func goldenCases(t *testing.T) map[string][]string {
 	return map[string][]string{
 		"base":    {"base"},
 		"default": parseAideStacks(t, DefaultAide()),
+		// Each agent without terminalfs: the policy it gets must stand on
+		// its own stack's fragment.
+		"claude":   {"base", "claude"},
+		"opencode": {"base", "opencode"},
 	}
 }
 
@@ -56,7 +60,7 @@ func TestGolden(t *testing.T) {
 				}
 			}
 			if len(missing) > 0 {
-				t.Skipf("golden case %q skipped: stacks not in the catalog yet: %s", name, strings.Join(missing, " "))
+				t.Fatalf("golden case %q names stacks that are not in the catalog: %s", name, strings.Join(missing, " "))
 			}
 			bc, err := Generate(mustResolve(t, cat, sel...))
 			if err != nil {

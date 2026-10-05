@@ -28,6 +28,7 @@ type Stack struct {
 	Suggests    []string `json:"suggests"`
 	Run         RunReq   `json:"run"`
 	Cache       []string `json:"cache"` // subdirectories of /var/cache/aide
+	Allow       []string `json:"allow"` // hosts the stack needs when the network is an allowlist
 
 	Fragment string            // Dockerfile fragment, no FROM
 	Hooks    map[string]File   // entrypoint.d/NN-name.sh -> file

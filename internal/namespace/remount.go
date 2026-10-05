@@ -15,12 +15,31 @@ import (
 // failure a rollback to the previous mounts. The plan's B5 steps 2-8.
 func (m *Manager) remount(ctx context.Context, ns string, st *config.State, res *stacks.Resolution, next []config.Mount, phase Phase, o Options) error {
 	name := ContainerName(ns)
+	if err := ensureSudoPassword(st); err != nil {
+		return err
+	}
+	// restart brings a container that was running back up when a step fails
+	// before it has been removed.
+	restart := func(err error) error {
+		if phase != Running {
+			return err
+		}
+		if serr := m.Docker.Start(context.WithoutCancel(ctx), name); serr != nil {
+			return fmt.Errorf("%w; restarting the container also failed: %v", err, brief(serr))
+		}
+		m.printf("container restarted with the previous mounts")
+		return err
+	}
 
 	// 2. Warn about busy work.
 	if phase == Running {
 		procs, err := m.Docker.Processes(ctx, name)
 		if err != nil {
-			m.warnf("could not list the processes in %s: %v", name, err)
+			// Not knowing is not the same as idle: ask.
+			m.warnf("could not list the processes in %s: %v", name, brief(err))
+			if !o.Yes && !m.confirm("could not check for running work; remounting restarts the container. Continue?") {
+				return fmt.Errorf("remount of namespace %s cancelled; nothing changed", ns)
+			}
 		}
 		if busy := busyProcesses(procs); len(busy) > 0 {
 			m.printf("these processes in %s will be stopped:", name)
@@ -44,19 +63,12 @@ func (m *Manager) remount(ctx context.Context, ns string, st *config.State, res 
 	t := time.Now()
 	id, err := m.Docker.Commit(ctx, name, ImageSnap(ns), true)
 	if err != nil {
-		err = fmt.Errorf("remount of namespace %s: commit the container: %w; mounts unchanged", ns, brief(err))
-		if phase == Running {
-			if serr := m.Docker.Start(context.WithoutCancel(ctx), name); serr != nil {
-				return fmt.Errorf("%w; restarting the container also failed: %v", err, serr)
-			}
-			m.printf("container restarted with the previous mounts")
-		}
-		return err
+		return restart(fmt.Errorf("remount of namespace %s: commit the container: %w; mounts unchanged", ns, brief(err)))
 	}
 	prevSnap := st.Snapshot
 	st.Snapshot = id
 	if err := m.Store.Save(ns, st); err != nil {
-		return err
+		return restart(err)
 	}
 	m.printf("committed in %s", since(t))
 
@@ -68,7 +80,7 @@ func (m *Manager) remount(ctx context.Context, ns string, st *config.State, res 
 	wctx := context.WithoutCancel(ctx)
 	t = time.Now()
 	if err := m.Docker.Remove(wctx, name, false); err != nil {
-		return fmt.Errorf("remount of namespace %s: remove the container: %w; the work is saved in %s", ns, err, ImageSnap(ns))
+		return restart(fmt.Errorf("remount of namespace %s: remove the container: %w; the work is saved in %s", ns, brief(err), ImageSnap(ns)))
 	}
 	if _, err := m.Docker.RunContainer(wctx, m.runSpec(ns, st, res, ImageSnap(ns), next)); err != nil {
 		// 7. Roll back to the previous mounts.

@@ -42,11 +42,30 @@ type State struct {
 	Snapshot string   `json:"snapshot,omitempty"` // image ID of aide-<ns>:snap, "" when none
 	Port     int      `json:"port"`
 	Password string   `json:"password"`
+	// SudoPassword is the agent user's password inside the container, asked
+	// for by sudo. It is set at every container start and never left in the
+	// container's environment, so only the host knows it.
+	SudoPassword string `json:"sudoPassword,omitempty"`
+	// Network is "allowlist" when the container may only reach the hosts its
+	// stacks need plus Allow, through the in-container proxy; "" (or "open")
+	// leaves the network as Docker gives it. It is fixed when a container is
+	// created. Allow can change while it runs.
+	Network string   `json:"network,omitempty"`
+	Allow   []string `json:"allow,omitempty"`
 	// AppliedMounts is the mount set the current container was created with.
 	// nil means there is no container; an empty slice means a container with
 	// no mounts.
 	AppliedMounts []Mount `json:"appliedMounts"`
 }
+
+// The values of State.Network.
+const (
+	NetworkOpen      = "open"
+	NetworkAllowlist = "allowlist"
+)
+
+// Restricted reports whether the namespace's network is an allowlist.
+func (st *State) Restricted() bool { return st.Network == NetworkAllowlist }
 
 // CurrentVersion is the state.json schema version this binary writes.
 const CurrentVersion = 1
@@ -221,8 +240,25 @@ func (s *Store) DefaultAide(seed []byte) ([]byte, error) {
 	if err := os.MkdirAll(s.Root, 0o700); err != nil {
 		return nil, fmt.Errorf("create config directory: %w", err)
 	}
-	if err := os.WriteFile(path, seed, 0o644); err != nil {
+	// Written whole and renamed into place, so a concurrent reader never
+	// sees a half-written (or empty) file.
+	tmp, err := os.CreateTemp(s.Root, "default.aide.*.tmp")
+	if err != nil {
 		return nil, fmt.Errorf("seed default.aide: %w", err)
+	}
+	_, werr := tmp.Write(seed)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp.Name(), 0o644)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), path)
+	}
+	if werr != nil {
+		os.Remove(tmp.Name())
+		return nil, fmt.Errorf("seed default.aide: %w", werr)
 	}
 	return seed, nil
 }
@@ -236,12 +272,41 @@ func (s *Store) Ports() ([]int, error) {
 	var ports []int
 	for _, n := range names {
 		st, err := s.Load(n)
-		if err != nil {
+		if err == nil {
+			ports = append(ports, st.Port)
 			continue
 		}
-		ports = append(ports, st.Port)
+		// A state this binary cannot use (another version, a field it does
+		// not know) still owns its port.
+		var raw struct {
+			Port int `json:"port"`
+		}
+		if data, rerr := os.ReadFile(s.statePath(n)); rerr == nil && json.Unmarshal(data, &raw) == nil && raw.Port > 0 {
+			ports = append(ports, raw.Port)
+		}
 	}
 	return ports, nil
+}
+
+// LockPorts takes the store-wide lock that makes "read every port, pick a
+// free one, save it" one step. It blocks until the lock is free; the holder
+// keeps it only for that step.
+func (s *Store) LockPorts() (unlock func(), err error) {
+	if err := os.MkdirAll(s.Root, 0o700); err != nil {
+		return nil, fmt.Errorf("create config directory: %w", err)
+	}
+	f, err := os.OpenFile(filepath.Join(s.Root, ".ports.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("open ports lock file: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("lock the port table: %w", err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 var nameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)

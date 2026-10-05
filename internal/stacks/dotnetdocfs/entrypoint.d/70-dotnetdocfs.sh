@@ -30,8 +30,12 @@ else
     fi
     log "starting dotnetdocfs on 127.0.0.1:$port, mounting at $m (log: $logfile)"
     # setsid -f detaches it from this hook so it outlives the entrypoint's
-    # hook loop; dotnetdoc mounts itself via sudo since it is not root.
-    as_agent setsid -f dotnetdoc --mount --path "$m" --port "$port" >>"$logfile" 2>&1 \
+    # hook loop; dotnetdoc mounts itself via sudo since it is not root. The
+    # log sits in a directory agent owns, so it is opened as agent too: root
+    # would follow whatever agent had put at that path.
+    # shellcheck disable=SC2016
+    as_agent sh -c 'exec setsid -f dotnetdoc --mount --path "$1" --port "$2" >>"$3" 2>&1' \
+        sh "$m" "$port" "$logfile" \
         || warn "could not start dotnetdoc"
     if ! wait_for_mount "$m" 15; then
         warn "dotnetdocfs is not mounted; see $logfile (needs --cap-add SYS_ADMIN, and apparmor=unconfined on AppArmor hosts)"

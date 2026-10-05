@@ -186,6 +186,15 @@ func (r *Resolution) Run() RunReq {
 	return out
 }
 
+// Allow returns the hosts the stacks need, sorted and deduplicated.
+func (r *Resolution) Allow() []string {
+	var out []string
+	for _, s := range r.Stacks {
+		out = append(out, s.Allow...)
+	}
+	return sortDedup(out)
+}
+
 func sortDedup(in []string) []string {
 	if len(in) == 0 {
 		return nil

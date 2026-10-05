@@ -44,6 +44,17 @@ func CacheVolume(ns string) string   { return "aide-" + ns + "-cache" }
 // LabelNamespace labels every image and container aide creates.
 const LabelNamespace = "aide.namespace"
 
+// ProxyURL is the allowlist proxy inside a container whose network is
+// restricted, and NetworkScript the root-only script that manages it.
+const (
+	ProxyURL      = "http://127.0.0.1:3128"
+	NetworkScript = "/usr/local/lib/aide/aide-network.sh"
+)
+
+// proxyVars are the variables that send a tool to the proxy; no_proxy and
+// NO_PROXY go with them.
+var proxyVars = []string{"http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "no_proxy", "NO_PROXY"}
+
 // StopTimeout is the grace period, in seconds, for `docker stop` and the
 // container's --stop-timeout.
 const StopTimeout = 30
@@ -159,7 +170,8 @@ func (m *Manager) open(ns string) (*config.State, func(), error) {
 
 // Observe works out the phase from Docker and repairs drift in st: a
 // snapshot whose image is gone is forgotten, and AppliedMounts is cleared
-// when there is no container. A repaired state is saved.
+// when there is no container. A repaired state is saved, so the caller must
+// hold the namespace lock.
 func (m *Manager) Observe(ctx context.Context, ns string, st *config.State) (Phase, error) {
 	phase, changed, err := m.observe(ctx, ns, st)
 	if err != nil {
@@ -184,7 +196,7 @@ func (m *Manager) observe(ctx context.Context, ns string, st *config.State) (Pha
 		_, err := m.Docker.Image(ctx, ImageSnap(ns))
 		switch {
 		case errors.Is(err, docker.ErrNotFound):
-			m.warnf("snapshot %s is gone; forgetting it", ImageSnap(ns))
+			m.warnf("snapshot %s is gone", ImageSnap(ns))
 			st.Snapshot = ""
 			changed = true
 		case err != nil:
@@ -197,17 +209,25 @@ func (m *Manager) observe(ctx context.Context, ns string, st *config.State) (Pha
 			changed = true
 		}
 	}
-	if baseMissing {
-		noContainer()
-		return NoImage, changed, nil
-	}
+	// The container decides the phase even when the base tag is gone (docker
+	// lets a tag go while a container runs from the snapshot): reporting "no
+	// image" then would leave a running container that no verb can stop.
 	c, err := m.Docker.Container(ctx, ContainerName(ns))
 	if errors.Is(err, docker.ErrNotFound) {
 		noContainer()
+		if baseMissing {
+			return NoImage, changed, nil
+		}
 		return Built, changed, nil
 	}
 	if err != nil {
 		return NoImage, false, fmt.Errorf("inspect container %s: %w", ContainerName(ns), err)
+	}
+	if got := c.Labels[LabelNamespace]; got != ns {
+		return NoImage, false, fmt.Errorf("container %s does not carry the label %s=%s, so aide did not create it for this namespace; aide will not touch it. Remove or rename that container, or use another namespace name", ContainerName(ns), LabelNamespace, ns)
+	}
+	if baseMissing {
+		m.warnf("image %s is gone but container %s still exists", ImageBase(ns), ContainerName(ns))
 	}
 	if c.Running {
 		return Running, changed, nil
@@ -254,12 +274,37 @@ func (m *Manager) runSpec(ns string, st *config.State, res *stacks.Resolution, i
 		env[k] = v
 	}
 	env["CODE_SERVER_PASSWORD"] = st.Password
+	if st.SudoPassword != "" {
+		env["AIDE_SUDO_PASSWORD"] = st.SudoPassword
+	}
+	capAdd := req.CapAdd
+	// Always set, never left out: a snapshot image keeps the environment of
+	// the container it was committed from, so a variable that is merely
+	// absent here would come back from the snapshot, and a namespace switched
+	// to an open network would start as an allowlist one without NET_ADMIN.
+	env["AIDE_NETWORK"] = config.NetworkOpen
+	for _, k := range proxyVars {
+		env[k] = ""
+	}
+	if st.Restricted() {
+		// The entrypoint installs the firewall rules that leave the proxy as
+		// the only way out, which takes NET_ADMIN; the variables send every
+		// tool that honours them to the proxy.
+		capAdd = append(append([]string{}, capAdd...), "NET_ADMIN")
+		slices.Sort(capAdd)
+		capAdd = slices.Compact(capAdd)
+		env["AIDE_NETWORK"] = config.NetworkAllowlist
+		for _, k := range proxyVars {
+			env[k] = ProxyURL
+		}
+		env["no_proxy"], env["NO_PROXY"] = "localhost,127.0.0.1", "localhost,127.0.0.1"
+	}
 	spec := docker.RunSpec{
 		Name:        ContainerName(ns),
 		Hostname:    ns,
 		Image:       image,
 		Publish:     fmt.Sprintf("127.0.0.1:%d:%d", st.Port, stacks.CodeServerPort),
-		CapAdd:      req.CapAdd,
+		CapAdd:      capAdd,
 		SecurityOpt: req.SecurityOpt,
 		Devices:     req.Devices,
 		Env:         env,
@@ -280,17 +325,53 @@ func (m *Manager) runSpec(ns string, st *config.State, res *stacks.Resolution, i
 	return spec
 }
 
+// ensureSudoPassword gives a namespace created by an older aide the password
+// its next container asks for on sudo. The caller saves st.
+func ensureSudoPassword(st *config.State) error {
+	if st.SudoPassword != "" {
+		return nil
+	}
+	pw, err := config.NewPassword()
+	if err != nil {
+		return err
+	}
+	st.SudoPassword = pw
+	return nil
+}
+
 // printAccess tells the user how to reach a running namespace.
 func (m *Manager) printAccess(ns string, st *config.State) {
 	m.printf("  url:      http://127.0.0.1:%d", st.Port)
 	m.printf("  password: %s", st.Password)
+	if st.SudoPassword != "" {
+		m.printf("  sudo:     %s", st.SudoPassword)
+	}
 	m.printf("  shell:    docker exec -it -u agent %s bash -l", ContainerName(ns))
+	if st.Restricted() {
+		m.printf("  network:  allowlist (the stacks' hosts plus %d of your own; \"aide ns:%s allow <host>\" adds one)", len(st.Allow), ns)
+	} else {
+		m.printf("  network:  open")
+	}
 }
 
 // dropImage removes an image that is no longer needed; a missing image or
 // one that later snapshots still build on is left alone silently.
 func (m *Manager) dropImage(ctx context.Context, ref string) {
-	err := m.Docker.RemoveImage(ctx, ref)
+	// ref is an image ID. A clone shares its source's snapshot image, so the
+	// ID may be all that stands behind another namespace's :snap tag, and
+	// removing an image by ID takes a lone tag with it.
+	info, err := m.Docker.Image(ctx, ref)
+	if errors.Is(err, docker.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		m.warnf("could not inspect old image %s: %v; leaving it", ref, err)
+		return
+	}
+	if len(info.Tags) > 0 {
+		return
+	}
+	err = m.Docker.RemoveImage(ctx, ref)
 	if err == nil || errors.Is(err, docker.ErrNotFound) {
 		return
 	}

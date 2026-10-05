@@ -19,6 +19,7 @@ func wantErr(t *testing.T, err error, sub string) {
 
 func TestNewBuildFirstStart(t *testing.T) {
 	h := newHarness(t)
+	h.free("web")
 	aide := "# web\naide ns:any stack tfs claude\naide ns:any stack claude\naide ns:any mount ~/src/a /home/agent/workspace/a/ '~/src/b' /home/agent/workspace/b\n"
 	if err := h.m.New(ctx, "web", strings.NewReader(aide), h.home); err != nil {
 		t.Fatal(err)
@@ -31,7 +32,7 @@ func TestNewBuildFirstStart(t *testing.T) {
 	h.noImage(ImageBase("web"))
 	h.image(ImageBase("web"), "sha256:base1", 30)
 	h.noContainer(ContainerName("web"))
-	h.ok("build", "volume create", "run")
+	h.ok("build", "volume create", "run", "exec aide-web "+NetworkScript+" allow")
 	if err := h.m.Build(ctx, "web", false); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +59,7 @@ func TestNewErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t)
+			h.free(tc.ns)
 			wantErr(t, h.m.New(ctx, tc.ns, strings.NewReader(tc.aide), h.home), tc.want)
 			if names, _ := h.m.Store.List(); len(names) != 0 {
 				t.Errorf("namespaces left behind: %v", names)
@@ -67,6 +69,19 @@ func TestNewErrors(t *testing.T) {
 	h := newHarness(t)
 	h.save("web", &config.State{Stacks: []string{"base"}})
 	wantErr(t, h.m.New(ctx, "web", strings.NewReader(""), h.home), "already exists")
+
+	// Docker objects under the name that this configuration does not know.
+	h = newHarness(t)
+	h.container(ContainerName("web"), true)
+	wantErr(t, h.m.New(ctx, "web", strings.NewReader("aide ns:x stack base\n"), h.home), "Docker already has container aide-web")
+	if names, _ := h.m.Store.List(); len(names) != 0 {
+		t.Errorf("namespaces left behind: %v", names)
+	}
+
+	// aide's own configuration and the Docker socket are never mounted.
+	h = newHarness(t)
+	h.free("web")
+	wantErr(t, h.m.New(ctx, "web", strings.NewReader("aide ns:x mount "+h.tmp+" /home/agent/workspace/t\n"), h.home), "aide's own configuration")
 }
 
 func TestStartUnchanged(t *testing.T) {
@@ -157,6 +172,7 @@ func runningWeb(h *harness, snap string) {
 func TestMountWhileRunning(t *testing.T) {
 	h := newHarness(t)
 	runningWeb(h, "sha256:snap0")
+	h.dangling("sha256:snap0", "sha256:snap1")
 	h.ps("web", psOutput)
 	h.ok("stop", "commit", "rm", "run", "image rm")
 	h.imageID(ImageSnap("web"), "sha256:snap1")
@@ -169,6 +185,26 @@ func TestMountWhileRunning(t *testing.T) {
 	for _, s := range []string{"claude", "terminalfs session serve", "opencode", "stopped in", "committed in", "recreated in"} {
 		if !strings.Contains(h.out.String(), s) {
 			t.Errorf("output lacks %q:\n%s", s, h.out.String())
+		}
+	}
+}
+
+// A clone shares its source's snapshot image. Remounting the source must not
+// delete that image by ID while the clone's tag still names it.
+func TestRemountKeepsSharedSnapshot(t *testing.T) {
+	h := newHarness(t)
+	runningWeb(h, "sha256:snap0")
+	shared := strings.Replace(imageJSON("sha256:snap0", 31), `"RepoTags":[]`, `"RepoTags":["aide-api:snap"]`, 1)
+	h.rec.On([]string{"image", "inspect", "-f", "{{json .}}", "sha256:snap0"}, shared, 0)
+	h.ps("web", "")
+	h.ok("stop", "commit", "rm", "run")
+	h.imageID(ImageSnap("web"), "sha256:snap1")
+	if err := h.m.Mount(ctx, "web", []config.Mount{{Host: "~/src/b", Container: "/home/agent/workspace/b"}}, h.home, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range h.rec.Transcript() {
+		if strings.HasPrefix(l, "docker image rm") {
+			t.Errorf("removed a snapshot another tag names: %s", l)
 		}
 	}
 }
@@ -252,6 +288,7 @@ func TestFlattenAboveThreshold(t *testing.T) {
 	h := newHarness(t)
 	h.m.FlattenThreshold = 40
 	runningWeb(h, "sha256:snap0")
+	h.dangling("sha256:snap0", "sha256:snap1")
 	h.ps("web", "")
 	h.ok("stop", "commit", "rm", "run", "image rm", "export", "import")
 	h.rec.On([]string{"image", "inspect", "-f", "{{json .}}", ImageSnap("web")}, imageJSON("sha256:snap1", 41), 0)
@@ -567,6 +604,7 @@ func TestClone(t *testing.T) {
 		}
 		h.save("web", st)
 		h.phase("web", p, snap)
+		h.free("api")
 		return h
 	}
 	t.Run("running-refused", func(t *testing.T) {
@@ -609,6 +647,22 @@ func TestClone(t *testing.T) {
 		h.save("api", &config.State{Stacks: []string{"base"}})
 		wantErr(t, h.m.Clone(ctx, "web", "api", Options{}), "namespace api already exists")
 	})
+	t.Run("target-volume-kept", func(t *testing.T) {
+		h := newHarness(t)
+		img, _ := fingerprint(t, "tfs")
+		h.save("web", &config.State{Stacks: []string{"tfs"}, Image: img})
+		h.phase("web", Built, "")
+		h.noContainer(ContainerName("api"))
+		h.noImage(ImageBase("api"))
+		h.noImage(ImageSnap("api"))
+		h.rec.On([]string{"volume", "inspect", CredsVolume("api")}, "[{}]", 0)
+		wantErr(t, h.m.Clone(ctx, "web", "api", Options{}), "volume aide-api-creds already exists")
+		for _, l := range h.rec.Transcript() {
+			if strings.Contains(l, "volume rm") || strings.Contains(l, "volume create") {
+				t.Errorf("touched the kept volume: %s", l)
+			}
+		}
+	})
 }
 
 func TestRemove(t *testing.T) {
@@ -620,7 +674,8 @@ func TestRemove(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
 			h.save("web", &config.State{Stacks: []string{"base"}})
-			h.ok("rm", "volume rm")
+			h.container(ContainerName("web"), true)
+			h.ok("stop", "rm", "volume rm")
 			h.rec.OnError([]string{"image", "rm", ImageSnap("web")}, "Error response from daemon: No such image: aide-web:snap", 1)
 			h.ok("image rm " + ImageBase("web"))
 			err := h.m.Remove(ctx, "web", keep, Options{Yes: true})
@@ -638,12 +693,30 @@ func TestRemove(t *testing.T) {
 	t.Run("docker-error-keeps-state", func(t *testing.T) {
 		h := newHarness(t)
 		h.save("web", &config.State{Stacks: []string{"base"}})
+		h.noContainer(ContainerName("web"))
 		h.ok("rm", "volume rm", "image rm")
 		h.fail("image rm "+ImageBase("web"), "Error response from daemon: conflict: unable to remove repository reference \"aide-web:base\" (must force) - container 123 is using its referenced image")
 		wantErr(t, h.m.Remove(ctx, "web", false, Options{Yes: true}), "its state is kept")
 		if ok, _ := h.m.Store.Exists("web"); !ok {
 			t.Error("state removed despite an error")
 		}
+	})
+	t.Run("foreign-container", func(t *testing.T) {
+		h := newHarness(t)
+		h.save("web", &config.State{Stacks: []string{"base"}})
+		h.rec.On([]string{"container", "inspect", "-f", "{{json .}}", ContainerName("web")}, `{"Id":"x","State":{"Running":true},"Config":{"Labels":{}}}`, 0)
+		wantErr(t, h.m.Remove(ctx, "web", false, Options{Yes: true}), "will not delete it")
+		if got := h.rec.Transcript(); len(got) != 1 {
+			t.Errorf("docker calls after a refused remove: %v", got)
+		}
+	})
+	t.Run("unrelated-not-found-keeps-state", func(t *testing.T) {
+		h := newHarness(t)
+		h.save("web", &config.State{Stacks: []string{"base"}})
+		h.noContainer(ContainerName("web"))
+		h.ok("rm", "volume rm", "image rm")
+		h.fail("volume rm "+CredsVolume("web"), "Error response from daemon: content digest sha256:abc: not found")
+		wantErr(t, h.m.Remove(ctx, "web", false, Options{Yes: true}), "its state is kept")
 	})
 	t.Run("missing", func(t *testing.T) {
 		h := newHarness(t)
@@ -672,7 +745,7 @@ func TestListStateDockerfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "aide ns:web stack tfs claude\naide ns:web mount '/Users/p/my src' /home/agent/workspace/x\n"
+	want := "aide ns:web stack tfs claude\naide ns:web mount '/Users/p/my src' /home/agent/workspace/x\naide ns:web network open\n"
 	if s != want {
 		t.Errorf("state:\n%s\nwant:\n%s", s, want)
 	}
@@ -714,7 +787,8 @@ func TestRunSpec(t *testing.T) {
 	want := "docker run -d --name aide-web --hostname web --init --stop-timeout 30 --label aide.namespace=web --publish 127.0.0.1:8085:8080" +
 		" --mount type=volume,src=aide-web-creds,dst=/home/agent/.credentials --mount type=volume,src=aide-web-cache,dst=/var/cache/aide" +
 		` --mount 'type=bind,"src=/a,b",dst=/home/agent/workspace/x' --cap-add SYS_ADMIN --security-opt apparmor=unconfined` +
-		" --env CODE_SERVER_PASSWORD=secret --env TERMINALFS_CLAUDE_STRICT=1 aide-web:snap"
+		" --env AIDE_NETWORK=open --env CODE_SERVER_PASSWORD=secret --env HTTPS_PROXY= --env HTTP_PROXY= --env NO_PROXY=" +
+		" --env TERMINALFS_CLAUDE_STRICT=1 --env http_proxy= --env https_proxy= --env no_proxy= aide-web:snap"
 	if got != want {
 		t.Errorf("run:\n got %s\nwant %s", got, want)
 	}
@@ -722,4 +796,184 @@ func TestRunSpec(t *testing.T) {
 	if spec := h.m.runSpec("web", st, res, "x", nil); len(spec.SecurityOpt) != 0 {
 		t.Errorf("apparmor not filtered: %v", spec.SecurityOpt)
 	}
+}
+
+// ns list holds no lock, so it must not write: a look at the wrong docker
+// context would otherwise make every namespace forget its snapshot.
+func TestListDoesNotRepairState(t *testing.T) {
+	h := newHarness(t)
+	h.save("web", &config.State{Stacks: []string{"base"}, Snapshot: "sha256:snap0", AppliedMounts: []config.Mount{}})
+	h.phase("web", NoImage, "")
+	h.noImage(ImageSnap("web"))
+	if _, err := h.m.List(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.load("web"); st.Snapshot != "sha256:snap0" || st.AppliedMounts == nil {
+		t.Errorf("list rewrote the state: %+v", st)
+	}
+}
+
+// A container outlives its base tag; the phase must still be the container's.
+func TestContainerWithoutBaseImage(t *testing.T) {
+	h := newHarness(t)
+	h.save("web", &config.State{Stacks: []string{"base"}, AppliedMounts: []config.Mount{}})
+	h.noImage(ImageBase("web"))
+	h.container(ContainerName("web"), true)
+	h.ok("stop")
+	if err := h.m.Stop(ctx, "web"); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.rec.Transcript(); !slices.Contains(got, "docker stop -t 30 aide-web") {
+		t.Errorf("the running container was not stopped: %v", got)
+	}
+}
+
+func TestForeignContainerRefused(t *testing.T) {
+	h := newHarness(t)
+	h.save("web", &config.State{Stacks: []string{"base"}})
+	h.rec.On([]string{"image", "inspect", "-f", "{{json .}}", ImageBase("web")}, imageJSON("sha256:base1", 3), 0)
+	h.rec.On([]string{"container", "inspect", "-f", "{{json .}}", ContainerName("web")}, `{"Id":"x","State":{"Running":true},"Config":{"Labels":{"aide.namespace":"other"}}}`, 0)
+	wantErr(t, h.m.Reset(ctx, "web", Options{Yes: true}), "aide will not touch it")
+}
+
+func TestShellRunsSomething(t *testing.T) {
+	for args, want := range map[string]bool{
+		"":           false,
+		"-l":         false,
+		"--login -i": false,
+		"--init-file /usr/lib/x/shellIntegration-bash.sh": false,
+		"-c npm test":   true,
+		"-lc make":      true,
+		"build.sh":      true,
+		"-e ./build.sh": true,
+	} {
+		if got := runsSomething(strings.Fields(args)); got != want {
+			t.Errorf("runsSomething(%q) = %v, want %v", args, got, want)
+		}
+	}
+}
+
+func TestProtectedContainerPaths(t *testing.T) {
+	for _, p := range []string{"/bin", "/lib/x", "/home/agent/.config/opencode", "/home/agent/.local", "/opt/x", "/var/lib/y", "/run", "/home/agent"} {
+		if _, err := CleanContainerPath(p); err == nil {
+			t.Errorf("%s was accepted", p)
+		}
+	}
+	if _, err := CleanContainerPath("/home/agent/workspace/app"); err != nil {
+		t.Error(err)
+	}
+}
+
+// A new namespace is on the allowlist unless its file opens the network, and
+// the state it prints reads back to the same thing.
+func TestNewNetworkDefaultsAndRoundTrip(t *testing.T) {
+	h := newHarness(t)
+	h.free("web")
+	if err := h.m.New(ctx, "web", strings.NewReader("aide ns:x stack base\naide ns:x allow example.com *.example.org\n"), h.home); err != nil {
+		t.Fatal(err)
+	}
+	st := h.load("web")
+	if !st.Restricted() || !slices.Equal(st.Allow, []string{"example.com", "*.example.org"}) {
+		t.Fatalf("state: %+v", st)
+	}
+	text, err := h.m.State(ctx, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.free("copy")
+	if err := h.m.New(ctx, "copy", strings.NewReader(text), h.home); err != nil {
+		t.Fatalf("%v\n%s", err, text)
+	}
+	if c := h.load("copy"); c.Network != st.Network || !slices.Equal(c.Allow, st.Allow) {
+		t.Errorf("round trip: %+v from\n%s", c, text)
+	}
+
+	h.free("open")
+	if err := h.m.New(ctx, "open", strings.NewReader("aide ns:x stack base\naide ns:x network open\n"), h.home); err != nil {
+		t.Fatal(err)
+	}
+	if h.load("open").Restricted() {
+		t.Error("network open was ignored")
+	}
+	h.free("bad")
+	wantErr(t, h.m.New(ctx, "bad", strings.NewReader("aide ns:x allow https://example.com/x\n"), h.home), "invalid host")
+}
+
+func TestRunSpecAllowlist(t *testing.T) {
+	h := newHarness(t)
+	_, res := fingerprint(t, "tfs")
+	st := &config.State{Port: 8085, Password: "secret", Network: config.NetworkAllowlist}
+	got := docker.CommandLine(docker.RunArgs(h.m.runSpec("web", st, res, ImageBase("web"), nil)))
+	for _, want := range []string{"--cap-add NET_ADMIN --cap-add SYS_ADMIN", "--env AIDE_NETWORK=allowlist", "--env https_proxy=http://127.0.0.1:3128", "--env HTTPS_PROXY=http://127.0.0.1:3128", "--env no_proxy=localhost,127.0.0.1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("run lacks %q:\n%s", want, got)
+		}
+	}
+	st.Network = config.NetworkOpen
+	got = docker.CommandLine(docker.RunArgs(h.m.runSpec("web", st, res, ImageBase("web"), nil)))
+	if strings.Contains(got, "NET_ADMIN") || strings.Contains(got, "3128") || !strings.Contains(got, "--env AIDE_NETWORK=open") || !strings.Contains(got, "--env https_proxy= ") {
+		t.Errorf("an open namespace got the allowlist settings:\n%s", got)
+	}
+}
+
+func TestAllowAndDisallow(t *testing.T) {
+	h := newHarness(t)
+	h.save("web", &config.State{Stacks: []string{"base"}, Network: config.NetworkAllowlist, AppliedMounts: []config.Mount{}})
+	h.phase("web", Running, "")
+	h.ok("exec aide-web " + NetworkScript + " allow")
+	if err := h.m.Allow(ctx, "web", []string{"example.com", "*.example.org"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.m.Allow(ctx, "web", []string{"example.com"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if st := h.load("web"); !slices.Equal(st.Allow, []string{"*.example.org"}) {
+		t.Errorf("allow: %v", st.Allow)
+	}
+	got := h.rec.Transcript()
+	if last := got[len(got)-1]; last != "docker exec aide-web "+NetworkScript+" allow '*.example.org'" {
+		t.Errorf("the running container was not told: %v", got)
+	}
+	wantErr(t, h.m.Allow(ctx, "web", []string{"nothere.example"}, true), "is not one of the hosts added")
+	wantErr(t, h.m.Allow(ctx, "web", []string{"Example.com:443"}, false), "invalid host")
+}
+
+func TestNetworkSwitch(t *testing.T) {
+	t.Run("without a container", func(t *testing.T) {
+		h := newHarness(t)
+		h.save("web", &config.State{Stacks: []string{"base"}, Network: config.NetworkAllowlist})
+		h.phase("web", Built, "")
+		wantErr(t, h.m.Network(ctx, "web", "open", Options{}), "cancelled")
+		if err := h.m.Network(ctx, "web", "open", Options{Yes: true}); err != nil {
+			t.Fatal(err)
+		}
+		if h.load("web").Restricted() {
+			t.Error("still restricted")
+		}
+		wantErr(t, h.m.Network(ctx, "web", "sometimes", Options{}), "want open or allowlist")
+	})
+	t.Run("running container is recreated", func(t *testing.T) {
+		h := newHarness(t)
+		img, _ := fingerprint(t, "tfs")
+		h.save("web", &config.State{Stacks: []string{"tfs"}, Image: img, Mounts: []config.Mount{h.mnt("a", "a")}, AppliedMounts: []config.Mount{h.mnt("a", "a")}})
+		h.phase("web", Running, "")
+		h.ps("web", "")
+		h.ok("stop", "commit", "rm", "run", "exec aide-web "+NetworkScript+" allow")
+		h.imageID(ImageSnap("web"), "sha256:snap1")
+		if err := h.m.Network(ctx, "web", "allowlist", Options{}); err != nil {
+			t.Fatal(err)
+		}
+		var run string
+		for _, l := range h.rec.Transcript() {
+			if strings.HasPrefix(l, "docker run -d") {
+				run = l
+			}
+		}
+		if !strings.Contains(run, "--env AIDE_NETWORK=allowlist") || !strings.Contains(run, "src="+h.src("a")) {
+			t.Errorf("recreated with: %s", run)
+		}
+		if st := h.load("web"); !st.Restricted() || st.Snapshot != "sha256:snap1" {
+			t.Errorf("state: %+v", st)
+		}
+	})
 }

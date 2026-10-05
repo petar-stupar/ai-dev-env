@@ -22,7 +22,7 @@ lint: fmt-check vet
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		if [ -n "$(SHELL_SCRIPTS)" ]; then shellcheck $(SHELL_SCRIPTS); fi; \
 	else \
-		echo "shellcheck not installed; skipping shell script lint"; \
+		echo "shellcheck is not installed; the shell scripts were not linted" >&2; exit 1; \
 	fi
 
 golden:

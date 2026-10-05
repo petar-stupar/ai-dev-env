@@ -13,12 +13,17 @@ ENV TERMINALFS_RUNTIME_DIR=/home/agent/mnt/terminalfs-sessions \
     TERMINALFS_CLAUDE_STRICT=1
 RUN install -d -o agent -g agent -m 0700 /home/agent/mnt/terminalfs-sessions
 
+# The Claude Code marketplace dir is baked in, so registering the plugin at
+# start (its state lives on the credentials volume) needs no network. It is
+# written as root and stays root-owned: the managed policy names this path as
+# the plugin's source, and agent must not be able to change what is installed
+# from it.
+RUN terminalfs plugin install claude --dir /usr/local/share/terminalfs/claude-code \
+    && chmod -R go-w /usr/local/share/terminalfs \
+    && test -d /usr/local/share/terminalfs/claude-code
+
 USER agent
 
 # The settings file is required at runtime; write the defaults into the image.
-# The Claude Code marketplace dir is baked in too, so registering the plugin at
-# start (its state lives on the credentials volume) needs no network.
-RUN mkdir -p /home/agent/.local/share/terminalfs \
-    && terminalfs --init-settings \
-    && test -s /home/agent/.config/terminalfs/settings.json \
-    && terminalfs plugin install claude --dir /home/agent/.local/share/terminalfs/claude-code
+RUN terminalfs --init-settings \
+    && test -s /home/agent/.config/terminalfs/settings.json

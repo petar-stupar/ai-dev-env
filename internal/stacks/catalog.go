@@ -50,6 +50,7 @@ type stackJSON struct {
 	Suggests    stringList `json:"suggests"`
 	Run         RunReq     `json:"run"`
 	Cache       []string   `json:"cache"`
+	Allow       []string   `json:"allow"`
 }
 
 // Catalog loads every embedded stack.
@@ -109,6 +110,7 @@ func loadStack(fsys fs.FS, name string) (*Stack, error) {
 		Suggests:    sj.Suggests,
 		Run:         sj.Run,
 		Cache:       sj.Cache,
+		Allow:       sj.Allow,
 		Hooks:       map[string]File{},
 		Files:       map[string]File{},
 		Contrib:     map[string][]byte{},
@@ -235,6 +237,11 @@ func ValidateStack(s *Stack) error {
 			return fmt.Errorf("stack %s: cache %q: must be a relative lower-case path", s.Name, c)
 		}
 	}
+	for _, h := range s.Allow {
+		if err := ValidHost(h); err != nil {
+			return fmt.Errorf("stack %s: allow: %w", s.Name, err)
+		}
+	}
 	for _, n := range s.Requires {
 		if n == s.Name {
 			return fmt.Errorf("stack %s: requires itself", s.Name)
@@ -248,16 +255,44 @@ func ValidateStack(s *Stack) error {
 	return nil
 }
 
+var hostRe = regexp.MustCompile(`^(\*\.)?[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
+
+// ValidHost checks one entry of a network allowlist: a lower-case host name
+// with at least two labels, or "*.name" for the name's subdomains (the name
+// itself is listed separately). Nothing else: no scheme, port, path or
+// address, so an entry can be handed to a shell and turned into a pattern
+// without quoting.
+func ValidHost(h string) error {
+	if len(h) > 253 || !hostRe.MatchString(h) {
+		return fmt.Errorf("invalid host %q: want a lower-case name like example.com, or *.example.com for its subdomains", h)
+	}
+	return nil
+}
+
 // checkFragment rejects a fragment that starts a new build stage: any line
 // whose first word is FROM (any case), unless it continues the previous line.
+// It also rejects a fragment whose last line is continued, because the
+// generator's own `USER root` after it would become part of that instruction
+// and the next stack would run as whoever this one left.
 func checkFragment(frag string) error {
 	continued := false
 	for i, line := range strings.Split(frag, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Docker drops comment lines wherever they are, so one never starts,
+		// continues or ends an instruction, whatever it ends with.
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
 		f := strings.Fields(line)
-		if !continued && len(f) > 0 && strings.EqualFold(f[0], "FROM") {
+		if !continued && len(f) > 0 && strings.EqualFold(strings.TrimSuffix(f[0], "\\"), "FROM") {
 			return fmt.Errorf("line %d: FROM is not allowed in a stack fragment", i+1)
 		}
-		continued = strings.HasSuffix(strings.TrimRight(line, " \t\r"), "\\")
+		if trimmed != "" {
+			continued = strings.HasSuffix(trimmed, "\\")
+		}
+	}
+	if continued {
+		return errors.New("the last line ends with a line continuation")
 	}
 	return nil
 }

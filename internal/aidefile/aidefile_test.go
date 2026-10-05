@@ -151,3 +151,25 @@ func TestPrintRoundTrip(t *testing.T) {
 		t.Errorf("no stacks Print = %q", got)
 	}
 }
+
+func TestParseSkipsByteOrderMark(t *testing.T) {
+	cmds, err := Parse(strings.NewReader("\xef\xbb\xbf# made on another machine\naide ns:x stack base\n"))
+	if err != nil || len(cmds) != 1 {
+		t.Fatalf("cmds = %+v, err = %v", cmds, err)
+	}
+	if _, err := ExpandHome("~/src", ""); err == nil {
+		t.Error("~ expanded without HOME")
+	}
+}
+
+func TestParseNetworkAndAllow(t *testing.T) {
+	cmds, err := Parse(strings.NewReader("aide ns:x network allowlist\naide ns:x allow example.com *.example.org\n"))
+	if err != nil || len(cmds) != 2 || cmds[0].Kind != Network || cmds[0].Args[0] != "allowlist" || cmds[1].Kind != Allow || len(cmds[1].Args) != 2 {
+		t.Fatalf("cmds = %+v, err = %v", cmds, err)
+	}
+	for _, bad := range []string{"aide ns:x network\n", "aide ns:x network maybe\n", "aide ns:x network open allowlist\n", "aide ns:x allow\n"} {
+		if _, err := Parse(strings.NewReader(bad)); err == nil {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+}

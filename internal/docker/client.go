@@ -14,13 +14,15 @@ import (
 )
 
 // IsNotFoundMessage reports whether docker's stderr says the object is missing.
+// Only the daemon's own "no such <object>" wording counts: a bare "not found"
+// also appears in unrelated failures (a missing content digest, a missing
+// executable), and treating those as "already gone" loses track of objects.
 func IsNotFoundMessage(stderr string) bool {
 	s := strings.ToLower(stderr)
 	return strings.Contains(s, "no such container") ||
 		strings.Contains(s, "no such image") ||
 		strings.Contains(s, "no such volume") ||
-		strings.Contains(s, "no such object") ||
-		strings.Contains(s, "not found")
+		strings.Contains(s, "no such object")
 }
 
 // mapNotFound makes err match ErrNotFound (errors.Is) when it is an
@@ -183,23 +185,29 @@ func (c *Client) inspectJSON(ctx context.Context, v any, args ...string) error {
 
 func (c *Client) Container(ctx context.Context, name string) (*ContainerInfo, error) {
 	var raw struct {
-		ID    string `json:"Id"`
-		Image string
-		State struct{ Running bool }
+		ID     string `json:"Id"`
+		Image  string
+		State  struct{ Running bool }
+		Config *struct{ Labels map[string]string }
 	}
 	if err := c.inspectJSON(ctx, &raw, "container", "inspect", "-f", "{{json .}}", name); err != nil {
 		return nil, err
 	}
-	return &ContainerInfo{ID: raw.ID, Running: raw.State.Running, Image: raw.Image}, nil
+	info := &ContainerInfo{ID: raw.ID, Running: raw.State.Running, Image: raw.Image}
+	if raw.Config != nil {
+		info.Labels = raw.Config.Labels
+	}
+	return info, nil
 }
 
 // ParseImageInspect parses one object of `docker image inspect` JSON (the
 // output of `-f {{json .}}`).
 func ParseImageInspect(data []byte) (*ImageInfo, error) {
 	var raw struct {
-		ID     string `json:"Id"`
-		RootFS struct{ Layers []string }
-		Config *struct {
+		ID       string `json:"Id"`
+		RepoTags []string
+		RootFS   struct{ Layers []string }
+		Config   *struct {
 			Entrypoint   []string
 			Cmd          []string
 			Env          []string
@@ -213,7 +221,7 @@ func ParseImageInspect(data []byte) (*ImageInfo, error) {
 	if err := json.Unmarshal(bytes.TrimSpace(data), &raw); err != nil {
 		return nil, err
 	}
-	info := &ImageInfo{ID: raw.ID, Layers: len(raw.RootFS.Layers)}
+	info := &ImageInfo{ID: raw.ID, Tags: raw.RepoTags, Layers: len(raw.RootFS.Layers)}
 	if cfg := raw.Config; cfg != nil {
 		info.Config = ImageConfig{
 			Entrypoint:   cfg.Entrypoint,

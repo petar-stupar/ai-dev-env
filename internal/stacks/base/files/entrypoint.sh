@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Prepares the volumes, runs every stack's entrypoint.d hook, then hands over
 # to code-server as `agent`.
 #
@@ -11,7 +11,41 @@ set -euo pipefail
 . /etc/aide/lib.sh
 
 CODE_SERVER_PORT="${CODE_SERVER_PORT:-8080}"
-CODE_SERVER_PASSWORD="${CODE_SERVER_PASSWORD:-agent}"
+
+# The two secrets come in through the environment. They are taken out of it
+# here, before anything else runs, so no hook and no agent process inherits
+# them; code-server gets its own further down.
+code_server_password="${CODE_SERVER_PASSWORD:-}"
+sudo_password="${AIDE_SUDO_PASSWORD:-}"
+unset CODE_SERVER_PASSWORD AIDE_SUDO_PASSWORD
+
+# sudo asks agent for this password. Without one (the image run by hand) the
+# account stays locked and only the 9P mount wrappers work through sudo.
+if [ -n "$sudo_password" ]; then
+    printf '%s:%s\n' "$AGENT_USER" "$sudo_password" | chpasswd \
+        || warn "could not set the sudo password"
+else
+    passwd --lock "$AGENT_USER" >/dev/null 2>&1 || true
+    log "no AIDE_SUDO_PASSWORD given; sudo is disabled for $AGENT_USER"
+fi
+unset sudo_password
+
+# There is no default password: a container started without one gets a random
+# one, printed once here.
+if [ -z "$code_server_password" ]; then
+    code_server_password="$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 16)"
+    log "no CODE_SERVER_PASSWORD given; generated one: $code_server_password"
+fi
+
+# The network allowlist comes before anything that runs as agent. If it
+# cannot be put in place the container stops here: a namespace that asked for
+# an allowlist must not come up with the network open.
+if [ "${AIDE_NETWORK:-}" = allowlist ]; then
+    /usr/local/lib/aide/aide-network.sh start \
+        || { warn "the network allowlist could not be set up; not starting (see above). \"aide ns:<name> network open\" turns it off"; exit 1; }
+else
+    /usr/local/lib/aide/aide-network.sh stop || true
+fi
 
 dirs=("$AGENT_HOME/mnt" "$AIDE_CACHE" /var/log/aide)
 if [ -r /etc/aide/cache-dirs ]; then
@@ -34,14 +68,9 @@ done
 # The workspace is a bind mount from the host, so its ownership is whatever the
 # host uses. Claim the top directory when we can; a read-only or root-owned
 # mount is not fatal, so only warn.
-if ! chown "$AGENT_UID:$AGENT_GID" "$WORKSPACE" 2>/dev/null; then
+if ! chown -h "$AGENT_UID:$AGENT_GID" "$WORKSPACE" 2>/dev/null; then
     warn "could not chown $WORKSPACE; the agent user may not be able to write to it"
 fi
-
-for hook in /etc/aide/entrypoint.d/*.sh; do
-    [ -e "$hook" ] || continue
-    bash "$hook" || warn "hook $(basename "$hook") failed (exit $?)"
-done
 
 # Shutdown order matters. The 9P servers (dotnetdocfs, terminalfs sessions)
 # serve mounts inside this container. If the kernel tears the mount namespace
@@ -51,7 +80,8 @@ done
 # this shell asks the servers to stop (they unmount themselves), lazily
 # unmounts whatever is left, and only then stops code-server.
 shutdown() {
-    trap - TERM INT
+    # Ignored, not reset: a second TERM must not kill this before the unmount.
+    trap '' TERM INT
     log "shutting down"
     pkill -TERM -u "$AGENT_UID" -x dotnetdoc 2>/dev/null || true
     pkill -TERM -u "$AGENT_UID" -x terminalfs 2>/dev/null || true
@@ -64,19 +94,28 @@ shutdown() {
     done
     while read -r _ target type _; do
         [ "$type" = 9p ] || continue
+        target="$(printf '%b' "$target")" # /proc/mounts writes a space as \040
         umount -l "$target" 2>/dev/null && log "unmounted $target" || true
     done </proc/mounts
     [ -n "${CODE_SERVER_PID:-}" ] && kill -TERM "$CODE_SERVER_PID" 2>/dev/null || true
     [ -n "${CODE_SERVER_PID:-}" ] && wait "$CODE_SERVER_PID" 2>/dev/null || true
-    exit 0
+    exit "${1:-0}"
 }
+# Set before the hooks: they are what mounts 9P, so a stop that arrives while
+# they run needs the same unmount.
 trap shutdown TERM INT
+
+for hook in /etc/aide/entrypoint.d/*.sh; do
+    [ -e "$hook" ] || continue
+    bash "$hook" || warn "hook $(basename "$hook") failed (exit $?)"
+done
 
 log "starting code-server on 0.0.0.0:$CODE_SERVER_PORT"
 setpriv --reuid="$AGENT_UID" --regid="$AGENT_GID" --init-groups \
-    env HOME="$AGENT_HOME" USER="$AGENT_USER" LOGNAME="$AGENT_USER" \
+    env -u AIDE_AGENT_PATH PATH="$AIDE_AGENT_PATH" \
+        HOME="$AGENT_HOME" USER="$AGENT_USER" LOGNAME="$AGENT_USER" \
         XDG_CACHE_HOME="${XDG_CACHE_HOME:-$AIDE_CACHE/xdg}" \
-        PASSWORD="$CODE_SERVER_PASSWORD" \
+        PASSWORD="$code_server_password" \
     code-server \
         --bind-addr "0.0.0.0:$CODE_SERVER_PORT" \
         --auth password \
@@ -91,4 +130,4 @@ while kill -0 "$CODE_SERVER_PID" 2>/dev/null; do
     wait "$CODE_SERVER_PID" && status=0 || status=$?
 done
 log "code-server exited with $status"
-shutdown
+shutdown "$status"

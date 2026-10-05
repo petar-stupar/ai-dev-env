@@ -1,4 +1,9 @@
 # docker
+docker container inspect -f '{{json .}}' aide-api
+docker image inspect -f '{{json .}}' aide-api:base
+docker image inspect -f '{{json .}}' aide-api:snap
+docker volume inspect aide-api-creds
+docker volume inspect aide-api-cache
 docker image inspect -f '{{json .}}' aide-web:base
 docker image inspect -f '{{json .}}' aide-web:snap
 docker container inspect -f '{{json .}}' aide-web
@@ -63,5 +68,6 @@ none
   "snapshot": "sha256:snap9",
   "port": 8081,
   "password": "<password>",
+  "sudoPassword": "<sudo-password>",
   "appliedMounts": null
 }

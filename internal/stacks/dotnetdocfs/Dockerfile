@@ -6,6 +6,6 @@ RUN curl -fsSL https://raw.githubusercontent.com/petar-stupar/dotnetdocfs/main/s
     && dotnetdoc --version
 
 # The mountpoint must exist and belong to agent, who runs the server and mounts
-# it (through passwordless sudo) at start. The port is loopback-only.
+# it (through the mount wrapper sudo allows it) at start. The port is loopback-only.
 RUN install -d -o agent -g agent /home/agent/mnt/dotnetdocfs
 ENV DOTNETDOCFS_PORT=15640

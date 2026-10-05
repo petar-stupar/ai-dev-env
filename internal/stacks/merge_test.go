@@ -1,6 +1,9 @@
 package stacks
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func mergeStr(t *testing.T, docs ...string) string {
 	t.Helper()
@@ -109,5 +112,61 @@ func TestMergeEdgeCases(t *testing.T) {
 	_, err = MergeJSON([]byte(`{"a":`))
 	if err == nil {
 		t.Fatal("truncated document accepted")
+	}
+}
+
+func TestMergeRejectsNonObject(t *testing.T) {
+	for _, doc := range []string{`["x"]`, `null`, `"s"`, `1`} {
+		if _, err := MergeJSON([]byte(doc)); err == nil || !strings.Contains(err.Error(), "must be a JSON object") {
+			t.Errorf("MergeJSON(%s) error = %v", doc, err)
+		}
+	}
+}
+
+// opencode reads a permission map in key order, last match wins, and the
+// merge appends new keys: a later allow must not land behind earlier denies.
+func TestCheckOpencodeOrder(t *testing.T) {
+	denies := `{"permission":{"bash":{"*":"allow","git push --force*":"deny"}}}`
+	for _, tc := range []struct {
+		name, later, want string
+	}{
+		{"allow behind a deny", `{"permission":{"bash":{"git *":"allow"}}}`, `pattern "git *"`},
+		{"ask behind a deny", `{"permission":{"bash":{"git *":"ask"}}}`, `pattern "git *"`},
+		{"another deny", `{"permission":{"bash":{"sudo *":"deny"}}}`, ""},
+		{"same patterns again", denies, ""},
+		{"another tool", `{"permission":{"external_directory":{"/x":"allow"}}}`, ""},
+	} {
+		err := CheckOpencodeOrder([]byte(denies), []byte(tc.later))
+		if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+			t.Errorf("%s: error = %v, want %q", tc.name, err, tc.want)
+		}
+	}
+	// A map that denies nothing may grow: the default set relies on it.
+	if err := CheckOpencodeOrder([]byte(`{"permission":{"external_directory":{"*":"ask"}}}`), []byte(`{"permission":{"external_directory":{"/t":"allow"}}}`)); err != nil {
+		t.Error(err)
+	}
+	// A deny placed before a later "*": "allow" would be cancelled by it.
+	if err := CheckOpencodeOrder([]byte(`{"permission":{"bash":{"sudo *":"deny"}}}`), []byte(`{"permission":{"bash":{"*":"allow"}}}`)); err == nil {
+		t.Error("a later catch-all allow behind a deny was accepted")
+	}
+}
+
+func TestCheckFragment(t *testing.T) {
+	for _, tc := range []struct {
+		name, frag string
+		ok         bool
+	}{
+		{"plain", "RUN true\n", true},
+		{"continued RUN mentioning FROM", "RUN echo \\\n    FROM x\n", true},
+		{"FROM", "RUN true\nfrom evil\n", false},
+		{"FROM split by a continuation", "FROM\\\n x\n", false},
+		{"FROM after a comment that ends in a backslash", "# note \\\nFROM evil AS x\n", false},
+		{"ends continued", "USER agent\nRUN true \\\n", false},
+		{"ends continued before blank lines", "RUN true \\\n\n", false},
+		{"comment inside a continued RUN", "RUN true \\\n# why\n    && true\n", true},
+	} {
+		if err := checkFragment(tc.frag); (err == nil) != tc.ok {
+			t.Errorf("%s: error = %v, want ok=%v", tc.name, err, tc.ok)
+		}
 	}
 }

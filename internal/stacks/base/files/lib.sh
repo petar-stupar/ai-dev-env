@@ -1,6 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Shared helpers for /etc/aide/entrypoint.sh and the entrypoint.d hooks.
 # Sourced, never executed; callers set their own shell options.
+
+# Everything here runs as root, and the image's PATH includes directories
+# agent can write to. Root looks commands up in root-owned directories only;
+# as_agent hands the image's PATH back to whatever it runs. /usr/local/sbin is
+# left out on purpose: it holds the restricted mount wrappers meant for sudo.
+if [ -z "${AIDE_AGENT_PATH:-}" ]; then
+    AIDE_AGENT_PATH="$PATH"
+fi
+export AIDE_AGENT_PATH
+PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 
 AGENT_USER=agent
 AGENT_HOME=/home/agent
@@ -20,8 +31,14 @@ warn() { printf '%s %s\n' "$_aide_tag WARNING:" "$*" >&2; }
 # would send every tool looking for its config in the wrong place.
 as_agent() {
     setpriv --reuid="$AGENT_UID" --regid="$AGENT_GID" --init-groups \
-        env HOME="$AGENT_HOME" USER="$AGENT_USER" LOGNAME="$AGENT_USER" \
+        env -u AIDE_AGENT_PATH PATH="$AIDE_AGENT_PATH" \
+            HOME="$AGENT_HOME" USER="$AGENT_USER" LOGNAME="$AGENT_USER" \
             XDG_CACHE_HOME="${XDG_CACHE_HOME:-$AIDE_CACHE/xdg}" "$@"
+}
+
+# agent_has CMD: whether agent finds CMD on its PATH.
+agent_has() {
+    as_agent sh -c 'command -v "$1" >/dev/null 2>&1' sh "$1"
 }
 
 # has_stack NAME: whether NAME was built into this image.

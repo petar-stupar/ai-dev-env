@@ -64,6 +64,9 @@ Usage:
   aide [-v] ns:<name> reset [--yes]
   aide [-v] ns:<name> mount <host> <container> [<host> <container>]... [--yes]
   aide [-v] ns:<name> umount <container-path>... [--yes]
+  aide [-v] ns:<name> network open|allowlist [--yes]   which hosts the container may reach
+  aide [-v] ns:<name> allow <host>...       add hosts (name or *.name) to the allowlist
+  aide [-v] ns:<name> disallow <host>...    remove hosts added with allow
   aide [-v] ns:<name> state                 print the configuration as .aide text
   aide [-v] ns:<name> dockerfile            print the Dockerfile build would use
   aide stacks                               list the stack catalog
@@ -101,13 +104,18 @@ type command struct {
 var nsVerbs = map[string]bool{
 	"stack": true, "build": true, "start": true, "stop": true, "reset": true,
 	"mount": true, "umount": true, "state": true, "dockerfile": true,
+	"network": true, "allow": true, "disallow": true,
 }
 
 // parse turns argv (without the program name) into a command.
 func parse(args []string) (*command, error) {
 	c := &command{}
 	var rest []string
-	for _, a := range args {
+	for i, a := range args {
+		if a == "--" { // everything after it is positional, a literal -v included
+			rest = append(rest, args[i:]...)
+			break
+		}
 		if a == "-v" {
 			c.Verbose = true
 			continue
@@ -222,7 +230,7 @@ func parseNSVerb(c *command, name string, args []string) (*command, error) {
 	switch verb {
 	case "build":
 		fs.BoolVar(&c.NoCache, "no-cache", false, "")
-	case "start", "reset", "mount", "umount":
+	case "start", "reset", "mount", "umount", "network":
 		fs.BoolVar(&c.Yes, "yes", false, "")
 	}
 	pos, err := parseInterspersed(fs, rest)
@@ -242,6 +250,14 @@ func parseNSVerb(c *command, name string, args []string) (*command, error) {
 	case "umount":
 		if len(pos) == 0 {
 			return nil, usagef("usage: aide ns:%s umount <container-path>...", name)
+		}
+	case "allow", "disallow":
+		if len(pos) == 0 {
+			return nil, usagef("usage: aide ns:%s %s <host>...", name, verb)
+		}
+	case "network":
+		if len(pos) != 1 {
+			return nil, usagef("usage: aide ns:%s network open|allowlist [--yes]", name)
 		}
 	default:
 		if len(pos) != 0 {
@@ -309,8 +325,8 @@ func execute(ctx context.Context, c *command, env func(string) string, stdin, st
 	}
 	if v := env("AIDE_FLATTEN_THRESHOLD"); v != "" {
 		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			return fmt.Errorf("AIDE_FLATTEN_THRESHOLD must be a non-negative integer, got %q", v)
+		if err != nil || n < 1 {
+			return fmt.Errorf("AIDE_FLATTEN_THRESHOLD must be a positive integer, got %q", v)
 		}
 		m.FlattenThreshold = n
 	}
@@ -340,6 +356,7 @@ func execute(ctx context.Context, c *command, env func(string) string, stdin, st
 	if err := detectPlatform(ctx, m, dc, env, home); err != nil {
 		return err
 	}
+	defer printPlatformWarnings(m, stderr)
 	o := namespace.Options{Yes: c.Yes}
 	switch c.Verb {
 	case "ns clone":
@@ -366,6 +383,12 @@ func execute(ctx context.Context, c *command, env func(string) string, stdin, st
 		return m.Mount(ctx, c.NS, pairs, home, o)
 	case "umount":
 		return m.Umount(ctx, c.NS, c.Args, o)
+	case "allow":
+		return m.Allow(ctx, c.NS, c.Args, false)
+	case "disallow":
+		return m.Allow(ctx, c.NS, c.Args, true)
+	case "network":
+		return m.Network(ctx, c.NS, c.Args[0], o)
 	}
 	return fmt.Errorf("internal error: unhandled verb %q", c.Verb)
 }
@@ -377,6 +400,22 @@ func detectPlatform(ctx context.Context, m *namespace.Manager, dc *docker.Client
 	}
 	m.Plat = p
 	return nil
+}
+
+// printPlatformWarnings reports what the platform probe could not find out
+// and guessed instead, once the command is done.
+func printPlatformWarnings(m *namespace.Manager, stderr io.Writer) {
+	w, ok := m.Plat.(interface{ Warnings() []string })
+	if !ok {
+		return
+	}
+	seen := map[string]bool{}
+	for _, s := range w.Warnings() {
+		if !seen[s] {
+			seen[s] = true
+			fmt.Fprintf(stderr, "warning: %s\n", s)
+		}
+	}
 }
 
 func newNS(ctx context.Context, c *command, m *namespace.Manager, dc *docker.Client, env func(string) string, home string, stdin *os.File) error {
@@ -405,6 +444,7 @@ func newNS(ctx context.Context, c *command, m *namespace.Manager, dc *docker.Cli
 	if err := detectPlatform(ctx, m, dc, env, home); err != nil {
 		return err
 	}
+	defer printPlatformWarnings(m, m.Err)
 	return m.New(ctx, name, src, home)
 }
 

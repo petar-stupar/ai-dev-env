@@ -47,6 +47,22 @@ func (m *Manager) Clone(ctx context.Context, from, to string, o Options) error {
 	}()
 	wctx := context.WithoutCancel(ctx)
 
+	// Nothing under the target's names may exist yet. Clone would otherwise
+	// overwrite a volume kept by "remove --keep-volumes" or another
+	// configuration's images, and its undo would then delete them.
+	if err := m.refuseLeftovers(ctx, to, "clone "+from+" to "+to); err != nil {
+		return err
+	}
+	for _, v := range []string{CredsVolume(to), CacheVolume(to)} {
+		ok, err := m.Docker.VolumeExists(ctx, v)
+		if err != nil {
+			return fmt.Errorf("clone %s to %s: inspect volume %s: %w", from, to, v, brief(err))
+		}
+		if ok {
+			return fmt.Errorf("cannot clone %s to %s: volume %s already exists (kept by an earlier \"remove --keep-volumes\"?) and the clone would overwrite it; remove it with \"docker volume rm %s\", or choose another name", from, to, v, v)
+		}
+	}
+
 	phase, err := m.Observe(ctx, from, src)
 	if err != nil {
 		return err
@@ -59,15 +75,13 @@ func (m *Manager) Clone(ctx context.Context, from, to string, o Options) error {
 		Version: config.CurrentVersion,
 		Stacks:  append([]string{}, src.Stacks...),
 		Mounts:  append([]config.Mount{}, src.Mounts...),
-	}
-	ports, err := m.Store.Ports()
-	if err != nil {
-		return err
-	}
-	if dst.Port, err = m.Plat.FreePort(ports); err != nil {
-		return fmt.Errorf("clone %s to %s: pick a port: %w", from, to, brief(err))
+		Network: src.Network,
+		Allow:   append([]string(nil), src.Allow...),
 	}
 	if dst.Password, err = config.NewPassword(); err != nil {
+		return err
+	}
+	if err := ensureSudoPassword(dst); err != nil {
 		return err
 	}
 
@@ -123,7 +137,7 @@ func (m *Manager) Clone(ctx context.Context, from, to string, o Options) error {
 		}
 	}
 
-	if err := m.Store.Save(to, dst); err != nil {
+	if err := m.savePicked(to, dst, "clone "+from+" to "+to); err != nil {
 		return err
 	}
 	saved = true
@@ -153,7 +167,21 @@ func (m *Manager) Remove(ctx context.Context, ns string, keepVolumes bool, o Opt
 	var errs []error
 	gone := func(what string, err error) {
 		if err != nil && !errors.Is(err, docker.ErrNotFound) {
-			errs = append(errs, fmt.Errorf("remove %s: %w", what, err))
+			errs = append(errs, fmt.Errorf("remove %s: %w", what, brief(err)))
+		}
+	}
+	c, err := m.Docker.Container(ctx, ContainerName(ns))
+	switch {
+	case errors.Is(err, docker.ErrNotFound):
+	case err != nil:
+		return fmt.Errorf("remove namespace %s: inspect container %s: %w", ns, ContainerName(ns), brief(err))
+	case c.Labels[LabelNamespace] != ns:
+		return fmt.Errorf("remove namespace %s: container %s does not carry the label %s=%s, so aide did not create it for this namespace and will not delete it", ns, ContainerName(ns), LabelNamespace, ns)
+	case c.Running:
+		// A plain stop first: the entrypoint unmounts its 9P trees on
+		// SIGTERM, and a container killed with them mounted can hang.
+		if err := m.Docker.Stop(ctx, ContainerName(ns), StopTimeout); err != nil {
+			m.warnf("could not stop %s cleanly: %v; removing it by force", ContainerName(ns), brief(err))
 		}
 	}
 	gone("container "+ContainerName(ns), m.Docker.Remove(ctx, ContainerName(ns), true))

@@ -2,5 +2,6 @@
   "description": "the 9P-filesystem build of opencode from petar-stupar/opencode (no shell or web tools); needs terminalfs",
   "order": 71,
   "requires": ["base", "terminalfs"],
-  "conflicts": ["opencode"]
+  "conflicts": ["opencode"],
+  "allow": ["opencode.ai", "*.opencode.ai", "models.dev"]
 }

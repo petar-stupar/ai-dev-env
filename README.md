@@ -21,7 +21,7 @@ aide ns:web mount ~/src/frontend /home/agent/workspace/frontend
 aide ns:web start
 ```
 
-`start` prints the URL and the password. Open the URL and enter the password.
+`start` prints the URL, the password and the sudo password. Open the URL and enter the password.
 VS Code Server is published on `127.0.0.1` only.
 
 Sign in to the agents once per namespace:
@@ -54,7 +54,7 @@ macOS alike:
 ```
 ~/.config/aide/
   default.aide                  seeded from the binary on first run; edit this copy
-  namespaces/<ns>/state.json    stacks, mounts, image id, snapshot id, port, password
+  namespaces/<ns>/state.json    stacks, mounts, image id, snapshot id, port, passwords
 ```
 
 Namespace names are lower case letters, digits and hyphens, up to 32 characters.
@@ -68,8 +68,8 @@ aide ns:web mount /Users/petar/src/frontend /home/agent/workspace/frontend
 ```
 
 Save it with `aide ns:web state > web.aide`, replay it with
-`aide ns new other web.aide`. Only `stack` and `mount` lines and `#` comments are
-allowed, the namespace on each line is ignored, and host paths may start with
+`aide ns new other web.aide`. Only `stack`, `mount`, `network` and `allow` lines
+and `#` comments are allowed, the namespace on each line is ignored, and host paths may start with
 `~`. There is no `unstack`: edit the file and create a new namespace.
 
 ## Commands
@@ -87,6 +87,9 @@ aide [-v] ns:<name> stop
 aide [-v] ns:<name> reset [--yes]
 aide [-v] ns:<name> mount <host> <container> [<host> <container>]... [--yes]
 aide [-v] ns:<name> umount <container-path>... [--yes]
+aide [-v] ns:<name> network open|allowlist [--yes]
+aide [-v] ns:<name> allow <host>...       add hosts (name or *.name) to the allowlist
+aide [-v] ns:<name> disallow <host>...    remove hosts added with allow
 aide [-v] ns:<name> state                 print the configuration as .aide text
 aide [-v] ns:<name> dockerfile            print the Dockerfile build would use
 aide stacks                               list the stack catalog
@@ -99,8 +102,15 @@ repos costs one restart, not one per repo.
 
 `clone` commits the source container, so the clone carries the work done inside
 it, and copies the credentials volume, so the clone is already signed in. The
-cache volume starts empty and the clone gets a new port and password. It refuses
-while the source is running unless you pass `--yes`, which commits it paused.
+cache volume starts empty and the clone gets a new port and passwords. It refuses
+while the source is running unless you pass `--yes`, which commits it paused. It
+also refuses when Docker already has a container, image or volume under the new
+name, such as a volume kept by `remove --keep-volumes`: it would overwrite it.
+
+`ns new` lists every host directory the `.aide` file mounts. Read that list when
+the file is not yours: each line hands a host directory to the agents read-write.
+aide refuses to mount its own configuration directory and any directory that
+holds the Docker socket.
 
 ### Command availability
 
@@ -111,6 +121,8 @@ while the source is running unless you pass `--yes`, which commits it paused.
 | `start` | no | yes | yes | no-op |
 | `stop` | no-op | no-op | no-op | yes |
 | `mount` / `umount` | recorded | recorded | recorded, applied on `start` | remount now |
+| `network` | recorded | recorded | recreates the container | recreates the container |
+| `allow` / `disallow` | recorded | recorded | recorded, applied on `start` | applied at once |
 | `reset` | no-op | no-op | yes | stops, then yes |
 | `state` | yes | yes | yes | yes |
 
@@ -204,16 +216,28 @@ cat <tree>/cmd/build/stdout
 
 Commands run as `agent` in the workspace. A deny list in
 `~/.config/terminalfs/settings.json`, generated at build time from terminalfs's
-own defaults, applies server-side too, so it holds whichever agent wrote the
-command. Whatever was refused is explained in the tree.
+own defaults, applies server-side too, whichever agent wrote the command.
+Whatever was refused is explained in the tree.
+
+The deny lists here and in the agent policies match how a command is written,
+not what it does. They stop an agent that follows its instructions from running
+those commands by accident. They do not contain an agent that is trying to get
+around them, and the terminalfs settings file belongs to `agent`. What an agent
+cannot do is become root: see [What holds the agents](#what-holds-the-agents).
 
 ### Claude Code
 
 The `claude` stack installs the terminalfs plugin (hooks and skill) at container
 start, and the stacks' policy fragments are merged into one managed policy,
 `/etc/claude-code/managed-settings.json`. Managed settings outrank user, project
-and command-line settings, so nothing inside a session can turn them off.
-For the default namespace it reads:
+and command-line settings, and the file is root-owned, so a session cannot change
+it. The policy also names the terminalfs plugin as enabled and the image's
+root-owned copy as its source. The installed copy lives on the credentials
+volume, which `agent` can write to, so the entrypoint reinstalls it from the
+image at every start and checks the result. If the plugin is not registered
+afterwards, the entrypoint turns `Bash` off for Claude Code with a managed
+drop-in (`/etc/claude-code/managed-settings.d/`) until a start succeeds.
+For the default namespace the policy reads:
 
 ```json
 {
@@ -276,9 +300,79 @@ The `dotnetdocfs` server mounts itself at `~/mnt/dotnetdocfs` and serves a
 skill. The entrypoint copies that skill into each agent's skills directory,
 substituting the real path for the `<mount>` placeholder the server writes.
 
-You still get a normal shell with passwordless sudo in the VS Code terminal. The
-policy shapes the agents, not you. The container is the boundary, and mounted
-repos are read-write.
+### What holds the agents
+
+The policy shapes the agents; it is not what contains them. Three things are:
+
+- **Root needs a password the agents do not have.** `sudo` in the VS Code
+  terminal asks for the namespace's sudo password, which `start` prints next to
+  the code-server one. aide generates it, the entrypoint sets it at every start
+  and removes it from the environment before anything else runs, and sudo does
+  not cache it. The one exception is the 9P mount the tools need: `agent` may
+  run `sudo mount` and `sudo umount` without a password, and those resolve to
+  wrappers that only mount 9P from `127.0.0.1` onto a directory under
+  `~/mnt` (with `nosuid,nodev`) and only unmount such a mount. For any other
+  mount, use `sudo /usr/bin/mount`.
+- **The container.** It runs with `SYS_ADMIN` (and without AppArmor confinement
+  where the host has AppArmor) because of those 9P mounts, so root inside it
+  is close to root on the Docker host. That is why root is behind a password.
+- **What you mount.** Mounted repos are read-write, and an agent can leave
+  files there that run on the host later: a git hook, an editor task, an
+  `.envrc`. Mount what the work needs.
+
+- **The network allowlist.** See below.
+
+One limit to know. The agents run as the same user as your terminal, so type
+the sudo password only in a container you trust: a tampered shell profile
+could capture it.
+
+### Network allowlist
+
+A new namespace can reach only the hosts on its allowlist. Anything an agent can
+read, including its own logins on the credentials volume, it could otherwise
+send anywhere.
+
+The list has two parts. Each stack names the hosts it needs in its `stack.json`
+(`allow`): the Ubuntu archives, Open VSX, the Anthropic and Claude hosts,
+GitHub, the npm, NuGet, PyPI and Go module hosts, and so on, for the stacks you
+selected. You add your own per namespace:
+
+```sh
+aide ns:web allow api.openai.com '*.example.com'   # a name, or *.name for its subdomains
+aide ns:web disallow api.openai.com
+aide ns:web network open        # no allowlist; asks first
+aide ns:web network allowlist
+```
+
+`allow` and `disallow` take effect at once in a running container. `network`
+recreates the container the way a mount change does, because the mode is fixed
+when the container is created. A `*.name` entry does not include `name` itself.
+
+How it works: the entrypoint starts `tinyproxy` on `127.0.0.1:3128` with the
+list as its filter, then installs firewall rules that refuse all outgoing
+traffic except the proxy's own. `http_proxy` and `https_proxy` point every tool
+at the proxy. If the rules or the proxy cannot be set up, the container does not
+start, so it never comes up open by accident; `docker logs aide-<ns>` says why.
+The container gets `NET_ADMIN` for this.
+
+What to expect:
+
+- HTTP, HTTPS (port 443) and SSH (port 22) get out, to allowed hosts only.
+  `git` over SSH works: the entrypoint points `ssh` at the proxy
+  (`/etc/ssh/ssh_config.d/90-aide-proxy.conf`), so `git@github.com:...` is
+  reachable when `github.com` is on the list. No SSH keys are mounted.
+- A tool that ignores the proxy variables cannot connect. Name resolution
+  happens in the proxy, so direct DNS lookups fail too.
+- The proxy sees host names, not content. An allowed host that accepts
+  uploads (a GitHub repo the agent can push to, a paste site you allowed) is
+  still a way out. Keep the list short.
+- The rules live inside the container, so root in the container can remove
+  them. Root is behind the sudo password.
+- opencode's own hosts are on the list, which covers OpenCode Zen
+  (`opencode.ai/zen`). Any other model provider needs its host added with
+  `allow`.
+- Namespaces created before this existed keep an open network until you run
+  `aide ns:<name> network allowlist` on a rebuilt image.
 
 On stop the entrypoint asks the 9P servers to unmount themselves before it stops
 code-server, because a server killed while its own mount is up can hang the
@@ -305,6 +399,10 @@ Both volumes survive `reset` and image rebuilds, and are not shared between
 namespaces. `remove` deletes them unless you pass `--keep-volumes`.
 
 The baked-in policy and config are not on the volumes, so a rebuild always wins.
+The credentials volume is different: it holds each agent's own configuration
+(for Claude Code that includes skills and plugin state), `agent` can write to
+it, and it survives `reset`, rebuilds and `clone`. `remove` without
+`--keep-volumes` is what clears it.
 
 ## Mounts and snapshots
 
@@ -342,8 +440,8 @@ container and snapshot, so the next `start` runs the base image again; the
 volumes stay.
 
 `docker commit` copies the container's environment into the snapshot image's
-config, including the code-server password. It stays in your local Docker, but
-do not push a snapshot image anywhere.
+config, including the code-server and sudo passwords. It stays in your local
+Docker, but do not push a snapshot image anywhere.
 
 ## Platforms
 

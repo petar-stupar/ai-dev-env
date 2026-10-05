@@ -38,6 +38,17 @@
     ],
     "defaultMode": "acceptEdits"
   },
+  "enabledPlugins": {
+    "terminalfs@terminalfs": true
+  },
+  "extraKnownMarketplaces": {
+    "terminalfs": {
+      "source": {
+        "source": "directory",
+        "path": "/usr/local/share/terminalfs/claude-code"
+      }
+    }
+  },
   "env": {
     "TERMINALFS_RUNTIME_DIR": "/home/agent/mnt/terminalfs-sessions",
     "TERMINALFS_CLAUDE_STRICT": "1",

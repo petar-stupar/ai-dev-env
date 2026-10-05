@@ -46,8 +46,6 @@ jobs:
   base-image:
     needs: test
     runs-on: ubuntu-latest
-    # Informational until the aide CLI (ns subcommands) lands.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

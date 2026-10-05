@@ -65,6 +65,7 @@ type ContainerInfo struct {
 	ID      string
 	Running bool
 	Image   string // image ID
+	Labels  map[string]string
 }
 
 // ImageConfig is the subset of an image's Config that flatten re-applies.
@@ -82,7 +83,8 @@ type ImageConfig struct {
 // ImageInfo is what aide needs from `docker image inspect`.
 type ImageInfo struct {
 	ID     string
-	Layers int // len(RootFS.Layers)
+	Tags   []string // RepoTags: every name that still points at this image
+	Layers int      // len(RootFS.Layers)
 	Config ImageConfig
 }
 

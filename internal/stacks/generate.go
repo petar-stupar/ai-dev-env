@@ -20,6 +20,7 @@ const (
 	ContextDockerfile      = "Dockerfile"
 	ContextStacks          = "aide/stacks"
 	ContextCacheDirs       = "aide/cache-dirs"
+	ContextAllowHosts      = "aide/allow-hosts"
 	ContextHooksDir        = "aide/entrypoint.d"
 	ContextManagedSettings = "aide/managed-settings.json"
 	ContextOpencode        = "aide/opencode.json"
@@ -83,6 +84,7 @@ func Generate(r *Resolution) (*BuildContext, error) {
 	names := r.Names()
 	files[ContextStacks] = File{Data: []byte(lines(names)), Mode: 0o644}
 	files[ContextCacheDirs] = File{Data: []byte(lines(sortDedup(cache))), Mode: 0o644}
+	files[ContextAllowHosts] = File{Data: []byte(lines(r.Allow())), Mode: 0o644}
 
 	claude := r.Has(ClaudeStack)
 	if claude {
@@ -94,6 +96,9 @@ func Generate(r *Resolution) (*BuildContext, error) {
 	}
 	opencode := r.HasOpencode()
 	if opencode {
+		if err := CheckOpencodeOrder(opencodeDocs...); err != nil {
+			return nil, fmt.Errorf("merging contrib/%s: %w", ContribOpencode, err)
+		}
 		m, err := MergeJSON(opencodeDocs...)
 		if err != nil {
 			return nil, fmt.Errorf("merging contrib/%s: %w", ContribOpencode, err)
@@ -130,7 +135,7 @@ func Generate(r *Resolution) (*BuildContext, error) {
 	if opencode {
 		w("COPY --chown=agent:agent %s %s/.config/opencode/opencode.json", ContextOpencode, AgentHome)
 	}
-	w("COPY %s %s %s/", ContextStacks, ContextCacheDirs, EtcDir)
+	w("COPY %s %s %s %s/", ContextStacks, ContextCacheDirs, ContextAllowHosts, EtcDir)
 	if len(hookOwner) > 0 {
 		w("COPY --chmod=0755 %s/ %s/entrypoint.d/", ContextHooksDir, EtcDir)
 	}

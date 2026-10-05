@@ -1,5 +1,11 @@
 # docker
+docker container inspect -f '{{json .}}' aide-api
+docker image inspect -f '{{json .}}' aide-api:base
+docker image inspect -f '{{json .}}' aide-api:snap
+docker volume inspect aide-api-creds
+docker volume inspect aide-api-cache
 docker image inspect -f '{{json .}}' aide-web:base
+docker container inspect -f '{{json .}}' aide-web
 docker volume inspect aide-web-creds
 # error
 none
@@ -41,5 +47,6 @@ none
   ],
   "port": 8081,
   "password": "<password>",
+  "sudoPassword": "<sudo-password>",
   "appliedMounts": null
 }

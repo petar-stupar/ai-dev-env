@@ -18,7 +18,7 @@ RUN set -eu; \
     tar -C /usr/local -xzf "/tmp/$file"; \
     rm -f "/tmp/$file"
 # Caches live on the cache volume; -buildvcs=false because workspaces are often not git roots.
-ENV PATH=/usr/local/go/bin:/home/agent/go/bin:$PATH \
+ENV PATH=/usr/local/go/bin:$PATH:/home/agent/go/bin \
     GOMODCACHE=/var/cache/aide/gomod \
     GOCACHE=/var/cache/aide/gobuild \
     GOFLAGS=-buildvcs=false

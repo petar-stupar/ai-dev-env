@@ -121,9 +121,9 @@ func TestReturnsIDs(t *testing.T) {
 	if id, err := c.Commit(ctx, "n", "i:snap", false); err != nil || id != "sha256:feed" {
 		t.Errorf("commit id = %q, %v", id, err)
 	}
-	r.On([]string{"container", "inspect"}, `{"Id":"abc123","Image":"sha256:feed","State":{"Running":true,"Status":"running"}}`, 0)
+	r.On([]string{"container", "inspect"}, `{"Id":"abc123","Image":"sha256:feed","State":{"Running":true,"Status":"running"},"Config":{"Labels":{"aide.namespace":"n"}}}`, 0)
 	ci, err := c.Container(ctx, "n")
-	if err != nil || *ci != (docker.ContainerInfo{ID: "abc123", Running: true, Image: "sha256:feed"}) {
+	if err != nil || ci.ID != "abc123" || !ci.Running || ci.Image != "sha256:feed" || ci.Labels["aide.namespace"] != "n" {
 		t.Errorf("container = %+v, %v", ci, err)
 	}
 }

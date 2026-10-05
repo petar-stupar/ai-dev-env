@@ -2,5 +2,6 @@
   "description": "upstream opencode; conflicts with opencode-filesystem",
   "order": 70,
   "requires": ["base"],
-  "conflicts": ["opencode-filesystem"]
+  "conflicts": ["opencode-filesystem"],
+  "allow": ["opencode.ai", "*.opencode.ai", "models.dev"]
 }

@@ -18,6 +18,8 @@ type Kind int
 const (
 	Stack Kind = iota + 1
 	Mount
+	Allow   // Args are host names
+	Network // Args is one of "open", "allowlist"
 )
 
 // Command is one parsed line. For Stack, Args are stack names. For Mount, Args
@@ -29,9 +31,10 @@ type Command struct {
 }
 
 // Parse reads .aide text. Blank lines and lines starting with # are skipped.
-// Every other line must be `aide ns:<any> stack <name>...` or
-// `aide ns:<any> mount <host> <container> [<host> <container>]...`; the
-// namespace is ignored. Errors name the line number.
+// Every other line must be `aide ns:<any> stack <name>...`,
+// `aide ns:<any> mount <host> <container> [<host> <container>]...`,
+// `aide ns:<any> allow <host>...` or `aide ns:<any> network open|allowlist`;
+// the namespace is ignored. Errors name the line number.
 func Parse(r io.Reader) ([]Command, error) {
 	var cmds []Command
 	sc := bufio.NewScanner(r)
@@ -40,6 +43,9 @@ func Parse(r io.Reader) ([]Command, error) {
 	for sc.Scan() {
 		n++
 		line := sc.Text()
+		if n == 1 {
+			line = strings.TrimPrefix(line, "\xef\xbb\xbf") // a byte-order mark some editors write
+		}
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || trimmed[0] == '#' {
 			continue
@@ -58,7 +64,7 @@ func Parse(r io.Reader) ([]Command, error) {
 			return nil, fmt.Errorf("line %d: expected ns:<name> after \"aide\", got %q", n, words[1])
 		}
 		if len(words) < 3 {
-			return nil, fmt.Errorf("line %d: missing arguments: expected a verb (stack or mount)", n)
+			return nil, fmt.Errorf("line %d: missing arguments: expected a verb (stack, mount, allow or network)", n)
 		}
 		args := words[3:]
 		switch words[2] {
@@ -75,8 +81,18 @@ func Parse(r io.Reader) ([]Command, error) {
 				return nil, fmt.Errorf("line %d: odd mount arguments: expected host/container pairs, got %d", n, len(args))
 			}
 			cmds = append(cmds, Command{Line: n, Kind: Mount, Args: args})
+		case "allow":
+			if len(args) == 0 {
+				return nil, fmt.Errorf("line %d: missing arguments: allow needs at least one host", n)
+			}
+			cmds = append(cmds, Command{Line: n, Kind: Allow, Args: args})
+		case "network":
+			if len(args) != 1 || args[0] != config.NetworkOpen && args[0] != config.NetworkAllowlist {
+				return nil, fmt.Errorf("line %d: network needs one argument: %s or %s", n, config.NetworkOpen, config.NetworkAllowlist)
+			}
+			cmds = append(cmds, Command{Line: n, Kind: Network, Args: args})
 		default:
-			return nil, fmt.Errorf("line %d: unknown verb %q (want stack or mount)", n, words[2])
+			return nil, fmt.Errorf("line %d: unknown verb %q (want stack, mount, allow or network)", n, words[2])
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -167,6 +183,9 @@ func Quote(s string) string {
 // ExpandHome replaces a leading "~" or "~/" with home. "~user" is an error, as
 // is a relative path, because mounts must be absolute.
 func ExpandHome(p, home string) (string, error) {
+	if home == "" && (p == "~" || strings.HasPrefix(p, "~/")) {
+		return "", fmt.Errorf("host path %q: cannot expand ~ because HOME is not set", p)
+	}
 	switch {
 	case p == "~":
 		p = home
@@ -181,9 +200,31 @@ func ExpandHome(p, home string) (string, error) {
 	return p, nil
 }
 
-// Print renders the configuration as commands: one stack line, then one mount
-// line per pair, each with a trailing newline.
+// Print renders stacks and mounts as commands: one stack line, then one
+// mount line per pair, each with a trailing newline.
 func Print(ns string, stacks []string, mounts []config.Mount) string {
+	return printStacksMounts(ns, stacks, mounts)
+}
+
+// PrintState is Print plus the network mode and the allowed hosts. The
+// network line is always written, because a file without one means the
+// default, which is the allowlist.
+func PrintState(ns string, st *config.State) string {
+	s := printStacksMounts(ns, st.Stacks, st.Mounts)
+	var b strings.Builder
+	b.WriteString(s)
+	mode := config.NetworkOpen
+	if st.Restricted() {
+		mode = config.NetworkAllowlist
+	}
+	fmt.Fprintf(&b, "aide ns:%s network %s\n", ns, mode)
+	if len(st.Allow) > 0 {
+		fmt.Fprintf(&b, "aide ns:%s allow %s\n", ns, strings.Join(st.Allow, " "))
+	}
+	return b.String()
+}
+
+func printStacksMounts(ns string, stacks []string, mounts []config.Mount) string {
 	var b strings.Builder
 	if len(stacks) > 0 {
 		fmt.Fprintf(&b, "aide ns:%s stack %s\n", ns, strings.Join(stacks, " "))

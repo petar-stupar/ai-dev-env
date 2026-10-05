@@ -57,13 +57,28 @@ func (m *Manager) New(ctx context.Context, ns string, aide io.Reader, home strin
 		return fmt.Errorf("namespace %s already exists", ns)
 	}
 
+	if err := m.refuseLeftovers(ctx, ns, "create namespace "+ns); err != nil {
+		return err
+	}
+
 	cmds, err := aidefile.Parse(aide)
 	if err != nil {
 		return fmt.Errorf("new namespace %s: %w", ns, err)
 	}
-	st := &config.State{Version: config.CurrentVersion, Stacks: []string{}, Mounts: []config.Mount{}}
+	// A new namespace reaches only the hosts on its allowlist unless the
+	// file says otherwise.
+	st := &config.State{Version: config.CurrentVersion, Stacks: []string{}, Mounts: []config.Mount{}, Network: config.NetworkAllowlist}
 	for _, c := range cmds {
 		switch c.Kind {
+		case aidefile.Network:
+			st.Network = c.Args[0]
+		case aidefile.Allow:
+			for _, h := range c.Args {
+				if err := stacks.ValidHost(h); err != nil {
+					return fmt.Errorf("new namespace %s: line %d: %w", ns, c.Line, err)
+				}
+			}
+			st.Allow = appendStacks(st.Allow, c.Args)
 		case aidefile.Stack:
 			st.Stacks = appendStacks(st.Stacks, c.Args)
 		case aidefile.Mount:
@@ -71,7 +86,7 @@ func (m *Manager) New(ctx context.Context, ns string, aide io.Reader, home strin
 			for i := 0; i+1 < len(c.Args); i += 2 {
 				pairs = append(pairs, config.Mount{Host: c.Args[i], Container: c.Args[i+1]})
 			}
-			valid, err := validateMounts(pairs, home, m.Plat)
+			valid, err := m.validateMounts(pairs, home)
 			if err != nil {
 				return fmt.Errorf("new namespace %s: line %d: %w", ns, c.Line, err)
 			}
@@ -82,25 +97,76 @@ func (m *Manager) New(ctx context.Context, ns string, aide io.Reader, home strin
 	if err != nil {
 		return err
 	}
-	ports, err := m.Store.Ports()
-	if err != nil {
-		return err
-	}
-	if st.Port, err = m.Plat.FreePort(ports); err != nil {
-		return fmt.Errorf("new namespace %s: pick a port: %w", ns, err)
-	}
 	if st.Password, err = config.NewPassword(); err != nil {
 		return err
 	}
-	if err := m.Store.Save(ns, st); err != nil {
+	if err := ensureSudoPassword(st); err != nil {
+		return err
+	}
+	if err := m.savePicked(ns, st, "new namespace "+ns); err != nil {
 		return err
 	}
 	created = true
 	m.printf("created namespace %s", ns)
 	m.printf("  stacks: %s", strings.Join(res.Names(), " "))
+	// Every mount is listed: the .aide file may be someone else's, and each
+	// line hands a host directory to the agents read-write.
 	m.printf("  mounts: %d", len(st.Mounts))
+	for _, mt := range st.Mounts {
+		m.printf("    %s -> %s (read-write)", mt.Host, mt.Container)
+	}
 	m.printf("  port:   %d", st.Port)
+	if st.Restricted() {
+		m.printf("  network: allowlist: %s", strings.Join(append(res.Allow(), st.Allow...), " "))
+	} else {
+		m.printf("  network: open")
+	}
 	m.printf("next: aide ns:%s build", ns)
+	return nil
+}
+
+// savePicked picks a free port for st and saves it, under the store-wide
+// lock so two commands cannot pick the same port.
+func (m *Manager) savePicked(ns string, st *config.State, what string) error {
+	unlock, err := m.Store.LockPorts()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	ports, err := m.Store.Ports()
+	if err != nil {
+		return err
+	}
+	if st.Port, err = m.Plat.FreePort(ports); err != nil {
+		return fmt.Errorf("%s: pick a port: %w", what, brief(err))
+	}
+	return m.Store.Save(ns, st)
+}
+
+// refuseLeftovers fails when Docker already has a container or an image
+// under the names of ns, which has no state here: they belong to another
+// aide configuration on the same daemon, or are left over, and every verb
+// would go on to treat them as this namespace's own.
+func (m *Manager) refuseLeftovers(ctx context.Context, ns, what string) error {
+	found := func(kind, name string, err error) error {
+		if errors.Is(err, docker.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("%s: inspect %s %s: %w", what, kind, name, brief(err))
+		}
+		return fmt.Errorf("cannot %s: Docker already has %s %s, which this aide configuration does not know. It belongs to another aide configuration or is left over; remove it with docker, or choose another name", what, kind, name)
+	}
+	_, err := m.Docker.Container(ctx, ContainerName(ns))
+	if err := found("container", ContainerName(ns), err); err != nil {
+		return err
+	}
+	for _, ref := range []string{ImageBase(ns), ImageSnap(ns)} {
+		_, err := m.Docker.Image(ctx, ref)
+		if err := found("image", ref, err); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -238,6 +304,9 @@ func (m *Manager) Start(ctx context.Context, ns string, o Options) error {
 		if st.Snapshot != "" {
 			image = ImageSnap(ns)
 		}
+		if err := ensureSudoPassword(st); err != nil {
+			return err
+		}
 		if _, err := m.Docker.RunContainer(ctx, m.runSpec(ns, st, res, image, st.Mounts)); err != nil {
 			_ = m.Docker.Remove(context.WithoutCancel(ctx), name, true)
 			return fmt.Errorf("start namespace %s: %w", ns, brief(err))
@@ -261,6 +330,7 @@ func (m *Manager) Start(ctx context.Context, ns string, o Options) error {
 			}
 		}
 	}
+	m.pushAllow(ctx, ns, st)
 	m.printf("namespace %s is running", ns)
 	m.printAccess(ns, st)
 	return nil
@@ -342,7 +412,7 @@ func (m *Manager) Mount(ctx context.Context, ns string, pairs []config.Mount, ho
 	if len(pairs) == 0 {
 		return errors.New("mount needs at least one <host-path> <container-path> pair")
 	}
-	valid, err := validateMounts(pairs, home, m.Plat)
+	valid, err := m.validateMounts(pairs, home)
 	if err != nil {
 		return err
 	}
@@ -414,7 +484,118 @@ func (m *Manager) changeMounts(ctx context.Context, ns, verb string, o Options, 
 	if err := m.remount(ctx, ns, st, res, next, Running, o); err != nil {
 		return err
 	}
+	m.pushAllow(ctx, ns, st)
 	m.printf("namespace %s is running with the new mounts", ns)
+	m.printAccess(ns, st)
+	return nil
+}
+
+// pushAllow hands the namespace's own allowed hosts to its running container,
+// which keeps them in its filesystem and reloads the proxy. A failure is a
+// warning: the container then allows only what its stacks need.
+func (m *Manager) pushAllow(ctx context.Context, ns string, st *config.State) {
+	if !st.Restricted() {
+		return
+	}
+	args := append([]string{NetworkScript, "allow"}, st.Allow...)
+	if _, err := m.Docker.Exec(ctx, ContainerName(ns), args...); err != nil {
+		m.warnf("could not send the allowed hosts to %s: %v; only the stacks' own hosts are reachable (an image built before the allowlist existed needs \"aide ns:%s reset\" and a build)", ContainerName(ns), brief(err), ns)
+	}
+}
+
+// Allow adds hosts to the namespace's allowlist; Disallow removes them. A
+// running container picks the change up at once.
+func (m *Manager) Allow(ctx context.Context, ns string, hosts []string, remove bool) error {
+	if len(hosts) == 0 {
+		return errors.New("allow needs at least one host")
+	}
+	for _, h := range hosts {
+		if err := stacks.ValidHost(h); err != nil {
+			return err
+		}
+	}
+	st, unlock, err := m.open(ns)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if remove {
+		for _, h := range hosts {
+			i := slices.Index(st.Allow, h)
+			if i < 0 {
+				return fmt.Errorf("disallow: %s is not one of the hosts added to namespace %s (a stack's own hosts cannot be removed)", h, ns)
+			}
+			st.Allow = slices.Delete(st.Allow, i, i+1)
+		}
+	} else {
+		st.Allow = appendStacks(st.Allow, hosts)
+	}
+	phase, err := m.Observe(ctx, ns, st)
+	if err != nil {
+		return err
+	}
+	if err := m.Store.Save(ns, st); err != nil {
+		return err
+	}
+	if len(st.Allow) == 0 {
+		m.printf("the allowlist of %s is now only what its stacks need", ns)
+	} else {
+		m.printf("the allowlist of %s is what its stacks need plus: %s", ns, strings.Join(st.Allow, " "))
+	}
+	switch {
+	case !st.Restricted():
+		m.printf("the network of %s is open, so the list has no effect until \"aide ns:%s network allowlist\"", ns, ns)
+	case phase == Running:
+		m.pushAllow(ctx, ns, st)
+	}
+	return nil
+}
+
+// Network switches a namespace between an open network and the allowlist. A
+// container is created with one or the other, so an existing one is
+// committed and recreated, as for a mount change.
+func (m *Manager) Network(ctx context.Context, ns, mode string, o Options) error {
+	if mode != config.NetworkOpen && mode != config.NetworkAllowlist {
+		return fmt.Errorf("network: want %s or %s, got %q", config.NetworkOpen, config.NetworkAllowlist, mode)
+	}
+	st, unlock, err := m.open(ns)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if st.Restricted() == (mode == config.NetworkAllowlist) {
+		m.printf("the network of %s is already %s", ns, mode)
+		return nil
+	}
+	if mode == config.NetworkOpen && !o.Yes && !m.confirm(fmt.Sprintf("open the network of namespace %s: the agents will be able to reach any host. Continue?", ns)) {
+		return fmt.Errorf("network change of namespace %s cancelled", ns)
+	}
+	phase, err := m.Observe(ctx, ns, st)
+	if err != nil {
+		return err
+	}
+	st.Network = mode
+	if phase != Stopped && phase != Running {
+		if err := m.Store.Save(ns, st); err != nil {
+			return err
+		}
+		m.printf("the network of %s is %s from its next start", ns, mode)
+		return nil
+	}
+	res, err := m.resolve(ns, st.Stacks)
+	if err != nil {
+		return err
+	}
+	m.printf("recreating the container: the network mode is fixed when it is created")
+	mounts := st.AppliedMounts
+	if mounts == nil {
+		mounts = st.Mounts
+	}
+	if err := m.remount(ctx, ns, st, res, mounts, phase, o); err != nil {
+		return err
+	}
+	m.pushAllow(ctx, ns, st)
+	m.printf("namespace %s is running with the network %s", ns, mode)
 	m.printAccess(ns, st)
 	return nil
 }
@@ -430,7 +611,7 @@ func (m *Manager) State(ctx context.Context, ns string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return aidefile.Print(ns, st.Stacks, st.Mounts), nil
+	return aidefile.PrintState(ns, st), nil
 }
 
 // Dockerfile returns the Dockerfile that build would use.
@@ -453,7 +634,11 @@ func (m *Manager) Dockerfile(ctx context.Context, ns string) ([]byte, error) {
 	return bc.Dockerfile, nil
 }
 
-// List summarises every namespace.
+// List summarises every namespace. It holds no lock, so it only looks: the
+// drift Observe would repair is left for the next verb that takes the lock.
+// Saving here could overwrite a state another command is changing, and one
+// run against the wrong docker context would make every namespace forget
+// its snapshot.
 func (m *Manager) List(ctx context.Context) ([]Summary, error) {
 	names, err := m.Store.List()
 	if err != nil {
@@ -465,7 +650,7 @@ func (m *Manager) List(ctx context.Context) ([]Summary, error) {
 		if err != nil {
 			return nil, err
 		}
-		phase, err := m.Observe(ctx, n, st)
+		phase, _, err := m.observe(ctx, n, st)
 		if err != nil {
 			return nil, fmt.Errorf("namespace %s: %w", n, err)
 		}

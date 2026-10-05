@@ -1,5 +1,6 @@
 {
   "description": "Ubuntu 24.04, build tools, git, ripgrep, tmux, neovim, code-server, the agent user and the entrypoint",
   "order": 0,
-  "cache": ["xdg"]
+  "cache": ["xdg"],
+  "allow": ["archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com", "open-vsx.org", "*.open-vsx.org"]
 }

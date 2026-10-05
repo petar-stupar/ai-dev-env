@@ -1,6 +1,7 @@
 #!/bin/bash
 # terminalfs at start: a clean sessions root, and its plugin registered with
-# whichever agents this image carries. Each step warns and carries on.
+# whichever agents this image carries. Each step warns and carries on, except
+# that Claude Code loses Bash when its plugin cannot be registered.
 set -u
 # shellcheck source=/dev/null
 . /etc/aide/lib.sh
@@ -14,9 +15,12 @@ install -d -o "$AGENT_UID" -g "$AGENT_GID" -m 0700 "$runtime" \
 
 # Session servers die with the container, so any session dir present now is
 # left over from a stop or a snapshot commit. Detach a mount that somehow
-# survived, then remove the dirs; --one-file-system keeps rm off anything
-# still mounted.
-if [ -d "$root" ]; then
+# survived, then remove the dirs. Both directories belong to agent, so
+# neither is followed if it has become a symlink, and the removal runs as
+# agent; --one-file-system keeps rm off anything still mounted.
+if [ -L "$runtime" ] || [ -L "$root" ]; then
+    warn "$root is reached through a symlink; not clearing stale sessions"
+elif [ -d "$root" ]; then
     n=0
     for d in "$root"/*/; do
         [ -d "$d" ] || continue
@@ -26,62 +30,74 @@ if [ -d "$root" ]; then
             umount -l "$d" || warn "could not unmount stale session $d"
         fi
     done
-    if find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system {} +; then
+    if as_agent find "$root" -mindepth 1 -maxdepth 1 -exec rm -rf --one-file-system {} +; then
         [ "$n" -gt 0 ] && log "cleared $n stale session dir(s) under $root"
     else
         warn "could not clear stale sessions under $root"
     fi
 fi
 
-# Claude Code: the plugin (skill + SessionStart/PreToolUse hooks) replaces the
-# skill copy ai-dev-env used to install. Plugin state lives under
-# CLAUDE_CONFIG_DIR on the credentials volume, so it is registered here, once
-# per terminalfs version (the stamp), rather than at build time.
+# Claude Code: the plugin (skill + SessionStart/PreToolUse hooks) is what keeps
+# Bash inside the tree; the managed policy allows Bash on that understanding.
+# The policy also names the plugin as enabled and this image's root-owned
+# marketplace dir as its source. The installed copy and its registration live
+# under CLAUDE_CONFIG_DIR on the credentials volume, which agent can write
+# to, so they are put back from the image at every start rather than trusted,
+# and the result is checked. If the plugin is not there afterwards, Bash is
+# switched off for Claude Code through a managed drop-in until a start
+# succeeds: the container still comes up, but not with Bash unguarded.
 if has_stack claude; then
     export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$AIDE_CREDS/claude}"
     if [ -d "$CLAUDE_CONFIG_DIR/skills/terminalfs" ]; then
-        rm -rf "$CLAUDE_CONFIG_DIR/skills/terminalfs" \
+        as_agent rm -rf "$CLAUDE_CONFIG_DIR/skills/terminalfs" \
             && log "removed the old terminalfs skill copy (the plugin ships its own)"
     fi
 
-    mp="$AGENT_HOME/.local/share/terminalfs/claude-code"
-    stamp="$CLAUDE_CONFIG_DIR/.aide-terminalfs-plugin"
-    v="$(terminalfs --version 2>/dev/null | head -n 1)"
-    prev="$(cat "$stamp" 2>/dev/null || true)"
+    mp=/usr/local/share/terminalfs/claude-code
+    plugin=terminalfs@terminalfs
+    dropins=/etc/claude-code/managed-settings.d
+    bash_off="$dropins/90-aide-terminalfs-plugin-missing.json"
 
-    if [ -z "$v" ]; then
-        warn "terminalfs --version failed; not registering the Claude Code plugin"
-    elif ! command -v claude >/dev/null 2>&1; then
-        warn "claude not on PATH; not registering the terminalfs plugin"
-    elif [ "$prev" = "$v" ]; then
-        log "Claude Code plugin already registered for $v"
+    # plugin_registered: whether Claude Code lists the plugin, enabled.
+    plugin_registered() {
+        local out
+        if out="$(as_agent claude plugin list --json 2>/dev/null)"; then
+            printf '%s' "$out" | jq -e --arg id "$plugin" \
+                '[.. | objects | select((.id? // .name? // "") == $id)] | any(.enabled != false)' \
+                >/dev/null 2>&1
+        else
+            # An older CLI without --json: fall back to its registry file.
+            jq -e --arg id "$plugin" '.plugins | has($id)' \
+                "$CLAUDE_CONFIG_DIR/plugins/installed_plugins.json" >/dev/null 2>&1
+        fi
+    }
+
+    if ! agent_has claude; then
+        warn "claude not on PATH; cannot register the terminalfs plugin"
+    elif [ ! -d "$mp" ]; then
+        warn "$mp is missing; cannot register the terminalfs plugin"
     else
-        ok=1
-        # Rewritten in case the image's copy is missing; cheap and offline.
-        as_agent terminalfs plugin install claude --dir "$mp" >/dev/null \
-            || { warn "terminalfs plugin install claude failed"; ok=0; }
         # add fails when the marketplace is already known: refresh it instead.
-        if [ "$ok" = 1 ] && ! as_agent claude plugin marketplace add "$mp" >/dev/null 2>&1; then
-            as_agent claude plugin marketplace update terminalfs >/dev/null \
-                || { warn "could not add or update the terminalfs marketplace"; ok=0; }
-        fi
-        # First time: install. After an upgrade: update. Each falls back to the other.
-        if [ "$ok" = 1 ]; then
-            if [ -z "$prev" ]; then
-                as_agent claude plugin install terminalfs@terminalfs >/dev/null \
-                    || as_agent claude plugin update terminalfs@terminalfs >/dev/null \
-                    || { warn "could not install the terminalfs Claude Code plugin"; ok=0; }
-            else
-                as_agent claude plugin update terminalfs@terminalfs >/dev/null \
-                    || as_agent claude plugin install terminalfs@terminalfs >/dev/null \
-                    || { warn "could not update the terminalfs Claude Code plugin"; ok=0; }
-            fi
-        fi
-        if [ "$ok" = 1 ]; then
-            printf '%s\n' "$v" | as_agent tee "$stamp" >/dev/null
-            log "Claude Code plugin registered for $v${prev:+ (was $prev)}"
-        fi
+        as_agent claude plugin marketplace add "$mp" >/dev/null 2>&1 \
+            || as_agent claude plugin marketplace update terminalfs >/dev/null 2>&1 \
+            || warn "could not add or update the terminalfs marketplace"
+        # Dropped and installed again so the copy that runs is the image's.
+        as_agent claude plugin uninstall "$plugin" >/dev/null 2>&1 || true
+        as_agent claude plugin install "$plugin" >/dev/null 2>&1 \
+            || as_agent claude plugin update "$plugin" >/dev/null 2>&1 \
+            || warn "could not install the terminalfs Claude Code plugin"
     fi
+
+    if plugin_registered; then
+        rm -f "$bash_off"
+        log "Claude Code plugin registered ($(terminalfs --version 2>/dev/null | head -n 1))"
+    else
+        install -d -m 0755 "$dropins"
+        printf '{"permissions":{"deny":["Bash"]}}\n' >"$bash_off"
+        chmod 0644 "$bash_off"
+        warn "the terminalfs Claude Code plugin is not registered, so nothing would keep Bash inside the tree; Bash is turned off for Claude Code until a container start registers it"
+    fi
+    rm -f "$CLAUDE_CONFIG_DIR/.aide-terminalfs-plugin" # the stamp older images kept
 fi
 
 # opencode: the plugin lives in the image's ~/.config/opencode/plugins, where

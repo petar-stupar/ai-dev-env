@@ -132,3 +132,16 @@ func TestLoadCatalogErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestValidHost(t *testing.T) {
+	for _, h := range []string{"example.com", "*.example.com", "a-b.c0.example.org"} {
+		if err := ValidHost(h); err != nil {
+			t.Errorf("%s: %v", h, err)
+		}
+	}
+	for _, h := range []string{"", "com", "*", "*.com", "Example.com", "example.com:443", "https://example.com", "exa mple.com", "a..b", "-a.com", "1.2.3.4/8", "*.*.example.com", "example.com\n", "$(id).com"} {
+		if err := ValidHost(h); err == nil {
+			t.Errorf("%q was accepted", h)
+		}
+	}
+}

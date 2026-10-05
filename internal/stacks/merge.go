@@ -45,6 +45,11 @@ func MergeJSON(docs ...[]byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("document %d: %w", i+1, err)
 		}
+		// These are settings files: anything but an object at the top would
+		// be written out as the whole policy.
+		if _, ok := v.(*jsonObject); !ok {
+			return nil, fmt.Errorf("document %d: the top level must be a JSON object", i+1)
+		}
 		if i == 0 {
 			acc = v
 			continue
@@ -60,6 +65,58 @@ func MergeJSON(docs ...[]byte) ([]byte, error) {
 	}
 	buf.WriteByte('\n')
 	return buf.Bytes(), nil
+}
+
+// CheckOpencodeOrder guards what MergeJSON cannot see in opencode documents.
+// An opencode permission map is read in key order and the last matching
+// pattern wins, while the merge appends new keys after the existing ones. A
+// later document could therefore add a pattern that is not a deny behind an
+// earlier document's denies and silently outrank them. That is an error; a
+// later document may add denies, or patterns to a map that denies nothing.
+func CheckOpencodeOrder(docs ...[]byte) error {
+	seen := map[string]*jsonObject{} // tool -> patterns merged so far
+	for i, d := range docs {
+		v, err := decodeOrdered(d)
+		if err != nil {
+			return fmt.Errorf("document %d: %w", i+1, err)
+		}
+		root, ok := v.(*jsonObject)
+		if !ok {
+			continue
+		}
+		perm, ok := root.vals["permission"].(*jsonObject)
+		if !ok {
+			continue
+		}
+		for _, tool := range perm.keys {
+			pats, ok := perm.vals[tool].(*jsonObject)
+			if !ok {
+				continue
+			}
+			acc := seen[tool]
+			if acc == nil {
+				acc = newObject()
+				seen[tool] = acc
+			}
+			denies := false
+			for _, k := range acc.keys {
+				if acc.vals[k] == "deny" {
+					denies = true
+				}
+			}
+			for _, k := range pats.keys {
+				if _, known := acc.vals[k]; !known && denies && pats.vals[k] != "deny" {
+					return fmt.Errorf("document %d: permission.%s: pattern %q (%v) would be read after the deny rules of an earlier document and outrank them; only deny patterns may be added there", i+1, tool, k, pats.vals[k])
+				}
+			}
+			for _, k := range pats.keys {
+				if _, known := acc.vals[k]; !known {
+					acc.set(k, pats.vals[k])
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func decodeOrdered(b []byte) (any, error) {

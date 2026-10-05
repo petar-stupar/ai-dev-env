@@ -10,9 +10,11 @@ docker image inspect -f '{{json .}}' aide-web:snap
 docker image inspect -f '{{json .}}' aide-web:base
 docker export aide-web | docker import --change 'ENTRYPOINT ["/etc/aide/entrypoint.sh"]' --change 'ENV PATH="/home/agent/.local/bin:/opt/node/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"' --change 'ENV AIDE_STACKS="base tfs"' --change 'ENV WORKSPACE="/home/agent/workspace"' --change 'USER root' --change 'WORKDIR /home/agent/workspace' --change 'EXPOSE 8080' --change 'LABEL "aide.namespace"="web"' --change 'LABEL "org.opencontainers.image.version"="24.04"' - aide-web:snap
 docker image inspect -f '{{.Id}}' aide-web:snap
+docker image inspect -f '{{json .}}' sha256:snap1
 docker image rm sha256:snap1
 docker rm aide-web
-docker run -d --name aide-web --hostname web --init --stop-timeout 30 --label aide.namespace=web --publish 127.0.0.1:8080:8080 --mount type=volume,src=aide-web-creds,dst=/home/agent/.credentials --mount type=volume,src=aide-web-cache,dst=/var/cache/aide --mount type=bind,src=$TMP/src/a,dst=/home/agent/workspace/a --mount type=bind,src=$TMP/src/b,dst=/home/agent/workspace/b --cap-add SYS_ADMIN --security-opt apparmor=unconfined --env CODE_SERVER_PASSWORD=<password> --env TERMINALFS_CLAUDE_STRICT=1 aide-web:snap
+docker run -d --name aide-web --hostname web --init --stop-timeout 30 --label aide.namespace=web --publish 127.0.0.1:8080:8080 --mount type=volume,src=aide-web-creds,dst=/home/agent/.credentials --mount type=volume,src=aide-web-cache,dst=/var/cache/aide --mount type=bind,src=$TMP/src/a,dst=/home/agent/workspace/a --mount type=bind,src=$TMP/src/b,dst=/home/agent/workspace/b --cap-add SYS_ADMIN --security-opt apparmor=unconfined --env AIDE_NETWORK=open --env AIDE_SUDO_PASSWORD=<sudo-password> --env CODE_SERVER_PASSWORD=<password> --env HTTPS_PROXY= --env HTTP_PROXY= --env NO_PROXY= --env TERMINALFS_CLAUDE_STRICT=1 --env http_proxy= --env https_proxy= --env no_proxy= aide-web:snap
+docker image inspect -f '{{json .}}' sha256:snap0
 docker image rm sha256:snap0
 # error
 none
@@ -43,6 +45,7 @@ none
   "snapshot": "sha256:flat1",
   "port": 8080,
   "password": "<password>",
+  "sudoPassword": "<sudo-password>",
   "appliedMounts": [
     {
       "host": "$TMP/src/a",
